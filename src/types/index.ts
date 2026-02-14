@@ -71,6 +71,7 @@ export interface ScoredPoint {
   score: number;
   color: string;
   band: ScoreBand;
+  trafficMod?: number;  // raw traffic penalty for this point
 }
 
 export interface RouteRating {

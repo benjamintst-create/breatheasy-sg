@@ -1,11 +1,10 @@
 // ============================================================
-// BreathEasy SG — Scoring Engine (v2: route-first)
+// BreathEasy SG — Scoring Engine (v2.1: traffic-sensitive)
 // ============================================================
 
 import type {
   ScoreBand, CurrentConditions, TrafficSpeedBand,
-  GridCell, StaticGrid, LatLng, ScoreResult,
-  ScoredPoint, RouteRating,
+  GridCell, StaticGrid, ScoredPoint, RouteRating,
 } from "@/types";
 
 // ── Score bands ──
@@ -59,33 +58,65 @@ function rainModifier(isRaining: boolean, intensity: string): number {
 }
 
 const DEG_TO_M = 111320;
+const TRAFFIC_RADIUS = 400; // metres — traffic pollution drifts
+
+// Point-to-segment distance for more accurate proximity
+function pointToSegmentDist(
+  px: number, py: number,
+  ax: number, ay: number,
+  bx: number, by: number,
+  cosLat: number
+): number {
+  const dx = (bx - ax) * DEG_TO_M * cosLat;
+  const dy = (by - ay) * DEG_TO_M;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) {
+    const ex = (px - ax) * DEG_TO_M * cosLat;
+    const ey = (py - ay) * DEG_TO_M;
+    return Math.sqrt(ex * ex + ey * ey);
+  }
+  const ex = (px - ax) * DEG_TO_M * cosLat;
+  const ey = (py - ay) * DEG_TO_M;
+  const t = Math.max(0, Math.min(1, (ex * dx + ey * dy) / lenSq));
+  const projX = ex - t * dx;
+  const projY = ey - t * dy;
+  return Math.sqrt(projX * projX + projY * projY);
+}
 
 function trafficModifier(lat: number, lng: number, speedBands: TrafficSpeedBand[]): number {
   if (!speedBands || speedBands.length === 0) return 0;
   const cosLat = Math.cos((lat * Math.PI) / 180);
+
+  // Find the closest band using point-to-segment distance
   let bestDist = Infinity;
   let bestBand = 8;
 
   for (const band of speedBands) {
     if (!band.startLat || !band.startLng) continue;
-    const midLat = (band.startLat + band.endLat) / 2;
-    const midLng = (band.startLng + band.endLng) / 2;
-    const dLat = (lat - midLat) * DEG_TO_M;
-    const dLng = (lng - midLng) * DEG_TO_M * cosLat;
-    const dist = Math.sqrt(dLat * dLat + dLng * dLng);
-    if (dist < 200 && dist < bestDist) {
+    const dist = pointToSegmentDist(
+      lat, lng,
+      band.startLat, band.startLng,
+      band.endLat, band.endLng,
+      cosLat
+    );
+    if (dist < TRAFFIC_RADIUS && dist < bestDist) {
       bestDist = dist;
       bestBand = band.speedBand;
     }
   }
 
   if (bestDist === Infinity) return 0;
-  const distanceFactor = 1 - bestDist / 200;
+
+  // Distance decay: full penalty at 0m, zero at TRAFFIC_RADIUS
+  const distanceFactor = 1 - bestDist / TRAFFIC_RADIUS;
+
+  // More aggressive congestion penalties
   let congestionPenalty: number;
-  if (bestBand <= 2) congestionPenalty = 3.0;
-  else if (bestBand <= 4) congestionPenalty = 2.0;
-  else if (bestBand <= 6) congestionPenalty = 1.0;
-  else congestionPenalty = 0;
+  if (bestBand <= 2) congestionPenalty = 4.0;      // Jam — severe
+  else if (bestBand <= 4) congestionPenalty = 2.5;  // Slow — significant
+  else if (bestBand <= 6) congestionPenalty = 1.5;  // Moderate — noticeable
+  else if (bestBand <= 7) congestionPenalty = 0.5;  // Light — mild
+  else congestionPenalty = 0;                        // Free flow — no penalty
 
   return Math.round(congestionPenalty * distanceFactor * 10) / 10;
 }
@@ -112,7 +143,7 @@ export function computeScore(
   grid: StaticGrid | null,
   hour?: number,
   speedBands?: TrafficSpeedBand[]
-): ScoreResult {
+) {
   const currentHour = hour ?? new Date().getHours();
   let staticBase = 3.0;
   if (grid) {
@@ -132,6 +163,7 @@ export function computeScore(
 
   return {
     score, band: band.band, label: band.label, color: band.color,
+    trafficMod: Math.round(trafficMod * 10) / 10, // expose for rating
     breakdown: {
       staticBase: Math.round(staticBase * 10) / 10,
       pm25Modifier: Math.round(pm25Mod * 10) / 10,
@@ -157,6 +189,7 @@ export function scoreRoutePoints(
     return {
       lat: p.lat, lng: p.lng, distanceM: p.distanceM,
       score: r.score, color: r.color, band: r.band,
+      trafficMod: r.trafficMod,
     };
   });
 }
@@ -172,6 +205,9 @@ export function rateRoute(
     return { overall: 50, trafficExposure: 50, airQuality: 50, greenCorridor: 50, consistency: 50, summary: "No data", factors: [] };
   }
 
+  const scores = scoredPoints.map(s => s.score);
+  const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
+
   // Get base scores for green corridor
   const basescores = scoredPoints.map(p => {
     if (!grid) return 3;
@@ -179,22 +215,13 @@ export function rateRoute(
     return cell ? cell.base : 3;
   });
 
-  // 1. Traffic Exposure (40%) — infer from score variance vs base
-  // Points near congested roads have higher scores
-  const scores = scoredPoints.map(s => s.score);
-  const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
-
-  // Estimate traffic contribution: difference between score and what it would be without traffic
-  // We approximate by looking at how many points have scores significantly above their base
-  const trafficContributions = scoredPoints.map((p, i) => {
-    const base = basescores[i];
-    const excess = Math.max(0, p.score - base - 1.5); // 1.5 accounts for pm25+time+wind
-    return Math.min(excess / 3, 1); // normalize 0-1
-  });
-  const avgTrafficExposure = trafficContributions.reduce((a, b) => a + b, 0) / trafficContributions.length;
-  const maxTrafficExposure = Math.max(...trafficContributions);
+  // 1. Traffic Exposure (40%) — use actual traffic modifier directly
+  const trafficMods = scoredPoints.map(p => (p as ScoredPoint & { trafficMod?: number }).trafficMod ?? 0);
+  const avgTrafficMod = trafficMods.reduce((a, b) => a + b, 0) / trafficMods.length;
+  const maxTrafficMod = Math.max(...trafficMods);
+  // Scale: 0 traffic mod = 100%, 4.0 traffic mod = 0%
   const trafficPct = Math.round(Math.max(0, Math.min(100,
-    100 - (avgTrafficExposure * 0.7 + maxTrafficExposure * 0.3) * 100
+    100 - (avgTrafficMod * 0.6 + maxTrafficMod * 0.4) * 25
   )));
 
   // 2. Air Quality (30%) — score 1=100%, 10=0%
