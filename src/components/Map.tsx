@@ -85,8 +85,8 @@ export default function Map({ coordinates, scoredPoints, trafficBands, onPointCl
     for (const band of nearby) {
       if (!band.startLat || !band.startLng || !band.endLat || !band.endLng) continue;
       const color = bandColor(band.speedBand);
-      const w = band.speedBand <= 4 ? 4 : 3;
-      const op = band.speedBand <= 4 ? 0.7 : 0.35;
+      const w = band.speedBand <= 4 ? 3 : 2;
+      const op = band.speedBand <= 4 ? 0.5 : 0.25;
       L.polyline([[band.startLat, band.startLng], [band.endLat, band.endLng]], {
         color, weight: w, opacity: op, lineCap: "round", lineJoin: "round",
       }).bindTooltip(`${band.roadName} — ${band.speedBand <= 2 ? "Jam" : band.speedBand <= 4 ? "Slow" : band.speedBand <= 6 ? "Moderate" : "Free flow"}`, {

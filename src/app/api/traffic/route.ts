@@ -24,19 +24,15 @@ async function fetchTomTomSegment(lat: number, lng: number, apiKey: string): Pro
   }
 }
 
-// Convert TomTom segment to our TrafficSpeedBand format
-function tomtomToSpeedBand(seg: TomTomSegment, roadName: string): {
+// Convert TomTom segment to multiple sub-segments using all intermediate coords
+function tomtomToSpeedBands(seg: TomTomSegment): {
   startLat: number; startLng: number; endLat: number; endLng: number;
   speedBand: number; roadName: string;
-} | null {
+}[] {
   const coords = seg.coordinates?.coordinate;
-  if (!coords || coords.length < 2) return null;
-  
-  const start = coords[0];
-  const end = coords[coords.length - 1];
+  if (!coords || coords.length < 2) return [];
 
   // Convert currentSpeed/freeFlowSpeed ratio to 1-8 speed band
-  // 1-2 = jam, 3-4 = slow, 5-6 = moderate, 7-8 = free flow
   const ratio = seg.freeFlowSpeed > 0 ? seg.currentSpeed / seg.freeFlowSpeed : 1;
   let speedBand: number;
   if (seg.roadClosure) speedBand = 1;
@@ -49,14 +45,19 @@ function tomtomToSpeedBand(seg: TomTomSegment, roadName: string): {
   else if (ratio < 0.95) speedBand = 7;
   else speedBand = 8;
 
-  return {
-    startLat: start.latitude,
-    startLng: start.longitude,
-    endLat: end.latitude,
-    endLng: end.longitude,
-    speedBand,
-    roadName: roadName || `${seg.currentSpeed}/${seg.freeFlowSpeed} km/h`,
-  };
+  const roadName = `${seg.currentSpeed} km/h (free: ${seg.freeFlowSpeed})`;
+  const bands = [];
+  for (let i = 0; i < coords.length - 1; i++) {
+    bands.push({
+      startLat: coords[i].latitude,
+      startLng: coords[i].longitude,
+      endLat: coords[i + 1].latitude,
+      endLng: coords[i + 1].longitude,
+      speedBand,
+      roadName,
+    });
+  }
+  return bands;
 }
 
 export async function GET(request: Request) {
@@ -96,12 +97,13 @@ export async function GET(request: Request) {
     const seen = new Set<string>(); // dedupe by start+end coords
     for (const seg of results) {
       if (!seg) continue;
-      const band = tomtomToSpeedBand(seg, `${seg.currentSpeed} km/h (free: ${seg.freeFlowSpeed})`);
-      if (!band) continue;
-      const key = `${band.startLat.toFixed(4)},${band.startLng.toFixed(4)}-${band.endLat.toFixed(4)},${band.endLng.toFixed(4)}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      tomtomBands.push(band);
+      const bands = tomtomToSpeedBands(seg);
+      for (const band of bands) {
+        const key = `${band.startLat.toFixed(5)},${band.startLng.toFixed(5)}-${band.endLat.toFixed(5)},${band.endLng.toFixed(5)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        tomtomBands.push(band);
+      }
     }
   }
 
