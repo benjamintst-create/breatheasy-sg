@@ -53,11 +53,21 @@ export default function Home() {
 
   useEffect(() => { setSavedRoutes(loadSavedRoutes()); }, []);
 
-  // Always fetch fresh conditions + traffic (no client-side caching)
-  const fetchData = useCallback(async () => {
+  // Always fetch fresh conditions + traffic
+  // Pass route points to traffic API for TomTom per-point lookups
+  const fetchData = useCallback(async (routeCoords?: { lat: number; lng: number }[]) => {
+    // Build points query string for TomTom (sample every ~200m, max 25)
+    let trafficUrl = "/api/traffic";
+    if (routeCoords && routeCoords.length > 0) {
+      const step = Math.max(1, Math.floor(routeCoords.length / 25));
+      const sampled = routeCoords.filter((_, i) => i % step === 0).slice(0, 25);
+      const pointsStr = sampled.map(p => `${p.lat.toFixed(5)},${p.lng.toFixed(5)}`).join("|");
+      trafficUrl = `/api/traffic?points=${encodeURIComponent(pointsStr)}`;
+    }
+
     const [condRes, trafficRes, gridRes] = await Promise.all([
       fetch("/api/conditions"),
-      fetch("/api/traffic"),
+      fetch(trafficUrl),
       gridRef.current ? Promise.resolve(null) : fetch("/data/static_grid.json"),
     ]);
 
@@ -83,9 +93,7 @@ export default function Home() {
     setSelectedPoint(null);
 
     try {
-      const { conditions, grid, traffic } = await fetchData();
-
-      // Interpolate at 50m from coordinates
+      const { conditions, grid, traffic } = await fetchData(coordinates);
       const { interpolateFromCoords } = await import("@/lib/gpx");
       const interpolated = interpolateFromCoords(coordinates, 50);
 
@@ -144,7 +152,7 @@ export default function Home() {
     try {
       const xml = await file.text();
       const parsed = parseGPX(xml);
-      const { conditions, grid, traffic } = await fetchData();
+      const { conditions, grid, traffic } = await fetchData(parsed.coordinates);
       const scoredPoints = scoreRoutePoints(parsed.interpolated, conditions, grid, traffic);
       const rating = rateRoute(scoredPoints, grid);
 

@@ -1,19 +1,118 @@
 import { NextResponse } from "next/server";
 import { fetchTrafficSpeedBands } from "@/lib/api";
 
-// No caching — always fetch fresh traffic data
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  const apiKey = process.env.LTA_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json({ bands: [], error: "LTA_API_KEY not configured" }, { status: 200 });
-  }
+// ── TomTom Flow Segment Data for a single point ──
+interface TomTomSegment {
+  currentSpeed: number;
+  freeFlowSpeed: number;
+  confidence: number;
+  roadClosure: boolean;
+  coordinates: { coordinate: { latitude: number; longitude: number }[] };
+}
+
+async function fetchTomTomSegment(lat: number, lng: number, apiKey: string): Promise<TomTomSegment | null> {
   try {
-    const bands = await fetchTrafficSpeedBands(apiKey);
-    return NextResponse.json({ bands });
-  } catch (error) {
-    console.error("Failed to fetch traffic data:", error);
-    return NextResponse.json({ bands: [] }, { status: 200 });
+    const url = `https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/15/json?key=${apiKey}&point=${lat},${lng}&unit=KMPH`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.flowSegmentData ?? null;
+  } catch {
+    return null;
   }
+}
+
+// Convert TomTom segment to our TrafficSpeedBand format
+function tomtomToSpeedBand(seg: TomTomSegment, roadName: string): {
+  startLat: number; startLng: number; endLat: number; endLng: number;
+  speedBand: number; roadName: string;
+} | null {
+  const coords = seg.coordinates?.coordinate;
+  if (!coords || coords.length < 2) return null;
+  
+  const start = coords[0];
+  const end = coords[coords.length - 1];
+
+  // Convert currentSpeed/freeFlowSpeed ratio to 1-8 speed band
+  // 1-2 = jam, 3-4 = slow, 5-6 = moderate, 7-8 = free flow
+  const ratio = seg.freeFlowSpeed > 0 ? seg.currentSpeed / seg.freeFlowSpeed : 1;
+  let speedBand: number;
+  if (seg.roadClosure) speedBand = 1;
+  else if (ratio < 0.25) speedBand = 1;
+  else if (ratio < 0.4) speedBand = 2;
+  else if (ratio < 0.55) speedBand = 3;
+  else if (ratio < 0.7) speedBand = 4;
+  else if (ratio < 0.8) speedBand = 5;
+  else if (ratio < 0.9) speedBand = 6;
+  else if (ratio < 0.95) speedBand = 7;
+  else speedBand = 8;
+
+  return {
+    startLat: start.latitude,
+    startLng: start.longitude,
+    endLat: end.latitude,
+    endLng: end.longitude,
+    speedBand,
+    roadName: roadName || `${seg.currentSpeed}/${seg.freeFlowSpeed} km/h`,
+  };
+}
+
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const pointsParam = searchParams.get("points"); // lat,lng|lat,lng|...
+
+  const ltaKey = process.env.LTA_API_KEY;
+  const tomtomKey = process.env.TOMTOM_API_KEY;
+
+  // Always fetch LTA speed bands (island-wide)
+  let ltaBands: { startLat: number; startLng: number; endLat: number; endLng: number; speedBand: number; roadName: string }[] = [];
+  if (ltaKey) {
+    try {
+      ltaBands = await fetchTrafficSpeedBands(ltaKey);
+    } catch (e) {
+      console.error("LTA fetch failed:", e);
+    }
+  }
+
+  // If route points provided + TomTom key, fetch per-point traffic for better coverage
+  let tomtomBands: typeof ltaBands = [];
+  if (tomtomKey && pointsParam) {
+    const points = pointsParam.split("|").map(p => {
+      const [lat, lng] = p.split(",").map(Number);
+      return { lat, lng };
+    }).filter(p => !isNaN(p.lat) && !isNaN(p.lng));
+
+    // Sample every ~200m (limit API calls). Max 25 points per request.
+    const step = Math.max(1, Math.floor(points.length / 25));
+    const sampled = points.filter((_, i) => i % step === 0).slice(0, 25);
+
+    // Fetch in parallel with concurrency limit
+    const results = await Promise.all(
+      sampled.map(p => fetchTomTomSegment(p.lat, p.lng, tomtomKey))
+    );
+
+    const seen = new Set<string>(); // dedupe by start+end coords
+    for (const seg of results) {
+      if (!seg) continue;
+      const band = tomtomToSpeedBand(seg, `${seg.currentSpeed} km/h (free: ${seg.freeFlowSpeed})`);
+      if (!band) continue;
+      const key = `${band.startLat.toFixed(4)},${band.startLng.toFixed(4)}-${band.endLat.toFixed(4)},${band.endLng.toFixed(4)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      tomtomBands.push(band);
+    }
+  }
+
+  // Merge: TomTom bands supplement LTA bands
+  const allBands = [...ltaBands, ...tomtomBands];
+
+  return NextResponse.json({ 
+    bands: allBands,
+    sources: {
+      lta: ltaBands.length,
+      tomtom: tomtomBands.length,
+    }
+  });
 }
