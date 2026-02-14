@@ -1,6 +1,4 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
 /* ============================================================
    BreathEasy SG — Global Styles
@@ -63,12 +61,10 @@ body {
   color: #5a7090 !important;
 }
 
-/* Attribution link styling */
 .leaflet-control-attribution a {
   color: #4a6080;
 }
 
-/* Leaflet tooltip for traffic overlay */
 .leaflet-tooltip {
   background: #0f1d32 !important;
   border: 1px solid #1e3050 !important;
@@ -84,4 +80,18 @@ body {
 }
 .leaflet-tooltip-bottom:before {
   border-bottom-color: #1e3050 !important;
+}
+
+/* Start/end tooltip styling */
+.start-tooltip, .end-tooltip {
+  background: #0f1d32 !important;
+  border: 1px solid #1e3050 !important;
+  color: #d0dce8 !important;
+  font-size: 10px !important;
+  font-weight: 600 !important;
+  padding: 2px 6px !important;
+  border-radius: 4px !important;
+}
+.start-tooltip::before, .end-tooltip::before {
+  border-top-color: #1e3050 !important;
 }

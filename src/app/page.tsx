@@ -44,6 +44,7 @@ export default function Home() {
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedPoint, setSelectedPoint] = useState<ScoredPoint | null>(null);
+  const [trafficBands, setTrafficBands] = useState<TrafficSpeedBand[]>([]);
 
   // Cache data so we don't re-fetch for every upload
   const conditionsRef = useRef<CurrentConditions | null>(null);
@@ -80,6 +81,7 @@ export default function Home() {
 
     conditionsRef.current = conditions;
     trafficRef.current = traffic;
+    setTrafficBands(traffic);
     lastFetchRef.current = now;
 
     return { conditions, grid: gridRef.current, traffic };
@@ -197,6 +199,7 @@ export default function Home() {
         <Map
           coordinates={activeRoute?.coordinates ?? []}
           scoredPoints={activeRoute?.scoredPoints ?? []}
+          trafficBands={trafficBands}
           onPointClick={setSelectedPoint}
         />
 
