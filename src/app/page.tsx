@@ -32,10 +32,10 @@ function loadSavedRoutes(): SavedRoute[] {
   } catch { return []; }
 }
 
-function saveRoutes(routes: SavedRoute[]) {
+function persistRoutes(routes: SavedRoute[]) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(routes.slice(0, MAX_SAVED)));
-  } catch { /* storage full — silently drop oldest */ }
+  } catch { /* storage full */ }
 }
 
 export default function Home() {
@@ -45,26 +45,16 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [selectedPoint, setSelectedPoint] = useState<ScoredPoint | null>(null);
   const [trafficBands, setTrafficBands] = useState<TrafficSpeedBand[]>([]);
+  const [editingName, setEditingName] = useState<string | null>(null); // route id being edited
+  const [editValue, setEditValue] = useState("");
 
-  // Cache data so we don't re-fetch for every upload
-  const conditionsRef = useRef<CurrentConditions | null>(null);
   const gridRef = useRef<StaticGrid | null>(null);
-  const trafficRef = useRef<TrafficSpeedBand[]>([]);
-  const lastFetchRef = useRef<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Load saved routes on mount
-  useEffect(() => {
-    setSavedRoutes(loadSavedRoutes());
-  }, []);
+  useEffect(() => { setSavedRoutes(loadSavedRoutes()); }, []);
 
-  // Fetch conditions + traffic (cached for 5 min)
+  // Always fetch fresh conditions + traffic (no client-side caching)
   const fetchData = useCallback(async () => {
-    const now = Date.now();
-    if (now - lastFetchRef.current < 5 * 60 * 1000 && conditionsRef.current) {
-      return { conditions: conditionsRef.current, grid: gridRef.current, traffic: trafficRef.current };
-    }
-
     const [condRes, trafficRes, gridRes] = await Promise.all([
       fetch("/api/conditions"),
       fetch("/api/traffic"),
@@ -79,13 +69,71 @@ export default function Home() {
       try { gridRef.current = await gridRes.json(); } catch { /* no grid */ }
     }
 
-    conditionsRef.current = conditions;
-    trafficRef.current = traffic;
     setTrafficBands(traffic);
-    lastFetchRef.current = now;
-
     return { conditions, grid: gridRef.current, traffic };
   }, []);
+
+  // Score a route's coordinates with fresh data
+  const analyzeCoordinates = useCallback(async (
+    id: string, name: string, coordinates: { lat: number; lng: number }[],
+    distanceM: number, distance: string, elevationGain: number
+  ) => {
+    setError(null);
+    setAnalyzing(true);
+    setSelectedPoint(null);
+
+    try {
+      const { conditions, grid, traffic } = await fetchData();
+
+      // Interpolate at 50m from coordinates
+      const { interpolateFromCoords } = await import("@/lib/gpx");
+      const interpolated = interpolateFromCoords(coordinates, 50);
+
+      const scoredPoints = scoreRoutePoints(interpolated, conditions, grid, traffic);
+      const rating = rateRoute(scoredPoints, grid);
+
+      const analyzed: AnalyzedRoute = {
+        id, name, distance, distanceM, elevationGain,
+        pointCount: coordinates.length,
+        coordinates,
+        scoredPoints,
+        rating,
+        conditions: {
+          pm25: conditions.pm25.value,
+          wind: conditions.wind.speed,
+          temp: conditions.temperature,
+          rain: conditions.rainfall.intensity,
+        },
+        analyzedAt: new Date().toISOString(),
+      };
+
+      setActiveRoute(analyzed);
+
+      // Update saved route
+      const saved: SavedRoute = {
+        id: analyzed.id, name: analyzed.name,
+        distance: analyzed.distance, distanceM: analyzed.distanceM,
+        elevationGain: analyzed.elevationGain,
+        rating: analyzed.rating, conditions: analyzed.conditions,
+        analyzedAt: analyzed.analyzedAt,
+        coordinates: downsample(analyzed.coordinates, 150),
+        scoredPoints: downsample(
+          analyzed.scoredPoints as unknown as { lat: number; lng: number }[],
+          150
+        ) as unknown as ScoredPoint[],
+      };
+
+      setSavedRoutes(prev => {
+        const updated = [saved, ...prev.filter(r => r.id !== saved.id)].slice(0, MAX_SAVED);
+        persistRoutes(updated);
+        return updated;
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to analyze route");
+    } finally {
+      setAnalyzing(false);
+    }
+  }, [fetchData]);
 
   // Analyze a GPX file
   const analyzeGPX = useCallback(async (file: File) => {
@@ -96,14 +144,8 @@ export default function Home() {
     try {
       const xml = await file.text();
       const parsed = parseGPX(xml);
-
-      // Fetch latest data
       const { conditions, grid, traffic } = await fetchData();
-
-      // Score at 50m intervals
       const scoredPoints = scoreRoutePoints(parsed.interpolated, conditions, grid, traffic);
-
-      // Rate the route
       const rating = rateRoute(scoredPoints, grid);
 
       const analyzed: AnalyzedRoute = {
@@ -127,15 +169,11 @@ export default function Home() {
 
       setActiveRoute(analyzed);
 
-      // Save to history
       const saved: SavedRoute = {
-        id: analyzed.id,
-        name: analyzed.name,
-        distance: analyzed.distance,
-        distanceM: analyzed.distanceM,
+        id: analyzed.id, name: analyzed.name,
+        distance: analyzed.distance, distanceM: analyzed.distanceM,
         elevationGain: analyzed.elevationGain,
-        rating: analyzed.rating,
-        conditions: analyzed.conditions,
+        rating: analyzed.rating, conditions: analyzed.conditions,
         analyzedAt: analyzed.analyzedAt,
         coordinates: downsample(analyzed.coordinates, 150),
         scoredPoints: downsample(
@@ -146,7 +184,7 @@ export default function Home() {
 
       setSavedRoutes(prev => {
         const updated = [saved, ...prev.filter(r => r.id !== saved.id)].slice(0, MAX_SAVED);
-        saveRoutes(updated);
+        persistRoutes(updated);
         return updated;
       });
     } catch (err) {
@@ -159,35 +197,51 @@ export default function Home() {
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) analyzeGPX(file);
-    e.target.value = ""; // allow re-upload of same file
+    e.target.value = "";
   }, [analyzeGPX]);
 
-  // Load a saved route for viewing
-  const loadSavedRoute = useCallback((saved: SavedRoute) => {
-    setActiveRoute({
-      id: saved.id,
-      name: saved.name,
-      distance: saved.distance,
-      distanceM: saved.distanceM,
-      elevationGain: saved.elevationGain,
-      pointCount: saved.coordinates.length,
-      coordinates: saved.coordinates,
-      scoredPoints: saved.scoredPoints,
-      rating: saved.rating,
-      conditions: saved.conditions,
-      analyzedAt: saved.analyzedAt,
-    });
-    setSelectedPoint(null);
-  }, []);
+  // Click a saved route → re-analyze with fresh data
+  const refreshRoute = useCallback((saved: SavedRoute) => {
+    analyzeCoordinates(
+      saved.id, saved.name, saved.coordinates,
+      saved.distanceM, saved.distance, saved.elevationGain
+    );
+  }, [analyzeCoordinates]);
 
   const deleteSavedRoute = useCallback((id: string) => {
     setSavedRoutes(prev => {
       const updated = prev.filter(r => r.id !== id);
-      saveRoutes(updated);
+      persistRoutes(updated);
       return updated;
     });
     if (activeRoute?.id === id) setActiveRoute(null);
   }, [activeRoute]);
+
+  // Rename route
+  const startRename = useCallback((id: string, currentName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingName(id);
+    setEditValue(currentName);
+  }, []);
+
+  const commitRename = useCallback(() => {
+    if (!editingName || !editValue.trim()) { setEditingName(null); return; }
+    const newName = editValue.trim();
+
+    // Update active route if it's the one being renamed
+    if (activeRoute?.id === editingName) {
+      setActiveRoute(prev => prev ? { ...prev, name: newName } : null);
+    }
+
+    // Update saved routes
+    setSavedRoutes(prev => {
+      const updated = prev.map(r => r.id === editingName ? { ...r, name: newName } : r);
+      persistRoutes(updated);
+      return updated;
+    });
+
+    setEditingName(null);
+  }, [editingName, editValue, activeRoute]);
 
   const pctColor = (pct: number) =>
     pct >= 80 ? "#4ecdc4" : pct >= 65 ? "#a8e6a3" : pct >= 50 ? "#f7d794" : pct >= 35 ? "#f8a978" : "#fc5c65";
@@ -226,7 +280,7 @@ export default function Home() {
             <div className="text-center">
               <div className="w-10 h-10 border-3 border-[#1e3050] border-t-[#4ecdc4] rounded-full animate-spin mx-auto mb-3" />
               <p className="text-sm text-[#4ecdc4] font-medium">Analyzing your route...</p>
-              <p className="text-xs text-[#5a7090] mt-1">Fetching conditions & scoring every 50m</p>
+              <p className="text-xs text-[#5a7090] mt-1">Fetching live conditions & scoring every 50m</p>
             </div>
           </div>
         )}
@@ -260,7 +314,6 @@ export default function Home() {
           <div className="px-5 py-4 border-b border-[#1a2d4a]">
             {/* Route header */}
             <div className="flex items-center gap-4 mb-4">
-              {/* Big percentage ring */}
               <div className="w-16 h-16 shrink-0 relative">
                 <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
                   <circle cx="18" cy="18" r="15" fill="none" stroke="#1e3050" strokeWidth="2.5" />
@@ -272,8 +325,29 @@ export default function Home() {
                   {activeRoute.rating.overall}
                 </span>
               </div>
-              <div className="min-w-0">
-                <h3 className="text-[15px] font-semibold text-[#d0dce8] truncate">{activeRoute.name}</h3>
+              <div className="min-w-0 flex-1">
+                {/* Editable name */}
+                {editingName === activeRoute.id ? (
+                  <input
+                    autoFocus
+                    value={editValue}
+                    onChange={e => setEditValue(e.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={e => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditingName(null); }}
+                    className="text-[15px] font-semibold text-[#d0dce8] bg-[#162340] border border-[#4ecdc4] rounded px-2 py-0.5 w-full outline-none"
+                  />
+                ) : (
+                  <h3
+                    className="text-[15px] font-semibold text-[#d0dce8] truncate cursor-pointer hover:text-[#4ecdc4] transition-colors group"
+                    onClick={(e) => startRename(activeRoute.id, activeRoute.name, e)}
+                    title="Click to rename"
+                  >
+                    {activeRoute.name}
+                    <svg className="w-3 h-3 inline-block ml-1.5 opacity-0 group-hover:opacity-60 transition-opacity" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                    </svg>
+                  </h3>
+                )}
                 <p className="text-xs text-[#5a7090] mt-0.5">
                   {activeRoute.distance}
                   {activeRoute.elevationGain > 0 && ` · ${activeRoute.elevationGain}m gain`}
@@ -282,10 +356,8 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Summary */}
             <p className="text-xs text-[#8aa0b8] leading-relaxed mb-4">{activeRoute.rating.summary}</p>
 
-            {/* Factor bars */}
             <div className="space-y-3">
               {activeRoute.rating.factors.map((f) => (
                 <div key={f.label}>
@@ -301,30 +373,23 @@ export default function Home() {
               ))}
             </div>
 
-            {/* Conditions at time of analysis */}
             <div className="mt-4 pt-3 border-t border-[#1a2d4a]">
-              <p className="text-[10px] uppercase tracking-[1.5px] text-[#5a7090] mb-2">Conditions at analysis</p>
+              <p className="text-[10px] uppercase tracking-[1.5px] text-[#5a7090] mb-2">Live conditions</p>
               <div className="grid grid-cols-4 gap-2 text-center">
-                <div className="bg-[#162340] rounded-lg px-2 py-1.5 border border-[#1e3050]">
-                  <p className="text-[9px] text-[#5a7090]">PM2.5</p>
-                  <p className="text-sm font-bold text-[#4ecdc4]">{activeRoute.conditions.pm25}</p>
-                </div>
-                <div className="bg-[#162340] rounded-lg px-2 py-1.5 border border-[#1e3050]">
-                  <p className="text-[9px] text-[#5a7090]">Wind</p>
-                  <p className="text-sm font-bold text-[#4ecdc4]">{activeRoute.conditions.wind}</p>
-                </div>
-                <div className="bg-[#162340] rounded-lg px-2 py-1.5 border border-[#1e3050]">
-                  <p className="text-[9px] text-[#5a7090]">Temp</p>
-                  <p className="text-sm font-bold text-[#4ecdc4]">{activeRoute.conditions.temp}°</p>
-                </div>
-                <div className="bg-[#162340] rounded-lg px-2 py-1.5 border border-[#1e3050]">
-                  <p className="text-[9px] text-[#5a7090]">Rain</p>
-                  <p className="text-sm font-bold text-[#4ecdc4]">{activeRoute.conditions.rain}</p>
-                </div>
+                {[
+                  { label: "PM2.5", val: activeRoute.conditions.pm25 },
+                  { label: "Wind", val: activeRoute.conditions.wind },
+                  { label: "Temp", val: `${activeRoute.conditions.temp}°` },
+                  { label: "Rain", val: activeRoute.conditions.rain },
+                ].map(c => (
+                  <div key={c.label} className="bg-[#162340] rounded-lg px-2 py-1.5 border border-[#1e3050]">
+                    <p className="text-[9px] text-[#5a7090]">{c.label}</p>
+                    <p className="text-sm font-bold text-[#4ecdc4]">{c.val}</p>
+                  </div>
+                ))}
               </div>
             </div>
 
-            {/* Score distribution mini chart */}
             <div className="mt-4 pt-3 border-t border-[#1a2d4a]">
               <p className="text-[10px] uppercase tracking-[1.5px] text-[#5a7090] mb-2">Score along route</p>
               <div className="flex gap-[1px] h-8 items-end">
@@ -332,10 +397,7 @@ export default function Home() {
                   <div
                     key={i}
                     className="flex-1 min-w-0 rounded-t-sm cursor-pointer hover:opacity-100 opacity-80"
-                    style={{
-                      height: `${Math.max(10, (p.score / 10) * 100)}%`,
-                      backgroundColor: p.color,
-                    }}
+                    style={{ height: `${Math.max(10, (p.score / 10) * 100)}%`, backgroundColor: p.color }}
                     title={`${Math.round(p.distanceM)}m — Score: ${p.score.toFixed(1)}`}
                     onClick={() => setSelectedPoint(p)}
                   />
@@ -349,7 +411,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* Selected point detail */}
         {selectedPoint && (
           <div className="px-5 py-3 border-b border-[#1a2d4a] bg-[#0a1628]">
             <div className="flex items-center gap-3">
@@ -376,10 +437,11 @@ export default function Home() {
             {savedRoutes.map((route) => {
               const isActive = activeRoute?.id === route.id;
               const color = pctColor(route.rating.overall);
+              const isEditing = editingName === route.id;
               return (
                 <div key={route.id} className="relative group">
                   <button
-                    onClick={() => loadSavedRoute(route)}
+                    onClick={() => refreshRoute(route)}
                     className={`w-full flex items-center gap-3 rounded-xl p-3 border transition-all text-left pr-9 ${
                       isActive ? "border-[#4ecdc4] bg-[#0f2a30]" : "border-[#1e3050] bg-[#162340] hover:border-[#2a4a6a] hover:bg-[#1a2a48]"
                     }`}
@@ -394,8 +456,26 @@ export default function Home() {
                         {route.rating.overall}
                       </span>
                     </div>
-                    <div className="min-w-0">
-                      <h4 className="text-[13px] font-semibold text-[#d0dce8] truncate">{route.name}</h4>
+                    <div className="min-w-0 flex-1">
+                      {isEditing ? (
+                        <input
+                          autoFocus
+                          value={editValue}
+                          onChange={e => setEditValue(e.target.value)}
+                          onBlur={commitRename}
+                          onKeyDown={e => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditingName(null); }}
+                          onClick={e => e.stopPropagation()}
+                          className="text-[13px] font-semibold text-[#d0dce8] bg-[#162340] border border-[#4ecdc4] rounded px-1.5 py-0.5 w-full outline-none"
+                        />
+                      ) : (
+                        <h4
+                          className="text-[13px] font-semibold text-[#d0dce8] truncate"
+                          onDoubleClick={(e) => startRename(route.id, route.name, e)}
+                          title="Double-click to rename"
+                        >
+                          {route.name}
+                        </h4>
+                      )}
                       <p className="text-[11px] text-[#5a7090] truncate">
                         {route.distance}
                         {route.elevationGain > 0 && ` · ${route.elevationGain}m`}
@@ -418,7 +498,6 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Footer */}
         <div className="px-5 py-2 border-t border-[#1a2d4a] text-[10px] text-[#3a5070]">
           Data: data.gov.sg · LTA DataMall · OSM
         </div>

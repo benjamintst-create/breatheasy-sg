@@ -122,6 +122,11 @@ function interpolateRoute(coords: LatLng[], stepM: number): { lat: number; lng: 
   return result;
 }
 
+/** Re-interpolate from stored coordinates (for refresh) */
+export function interpolateFromCoords(coords: LatLng[], stepM: number): { lat: number; lng: number; distanceM: number }[] {
+  return interpolateRoute(coords, stepM);
+}
+
 /** Downsample coordinates for storage */
 export function downsample(coords: LatLng[], target: number): LatLng[] {
   if (coords.length <= target) return coords;
