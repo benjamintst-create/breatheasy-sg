@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   BreathEasy SG — Global Styles
+   ============================================================ */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", sans-serif;
+  overflow: hidden;
+  height: 100vh;
+}
+
+/* Scrollbar */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #2a3d5a;
+  border-radius: 3px;
+}
+
+/* Leaflet overrides for dark theme */
+.leaflet-container {
+  background: #0a1628 !important;
+  font-family: inherit;
+}
+
+.leaflet-control-zoom a {
+  background: #0f1d32 !important;
+  color: #8aa0b8 !important;
+  border-color: #1e3050 !important;
+}
+
+.leaflet-control-zoom a:hover {
+  background: #1a2a48 !important;
+}
+
+.leaflet-popup-content-wrapper {
+  background: #0f1d32;
+  color: #d0dce8;
+  border-radius: 10px;
+  border: 1px solid #1e3050;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.leaflet-popup-tip {
+  background: #0f1d32;
+}
+
+.leaflet-popup-close-button {
+  color: #5a7090 !important;
+}
+
+/* Attribution link styling */
+.leaflet-control-attribution a {
+  color: #4a6080;
+}
+
+/* Leaflet tooltip for traffic overlay */
+.leaflet-tooltip {
+  background: #0f1d32 !important;
+  border: 1px solid #1e3050 !important;
+  color: #c0d0e0 !important;
+  font-family: inherit !important;
+  font-size: 11px !important;
+  border-radius: 6px !important;
+  padding: 4px 8px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4) !important;
+}
+.leaflet-tooltip-top:before {
+  border-top-color: #1e3050 !important;
+}
+.leaflet-tooltip-bottom:before {
+  border-bottom-color: #1e3050 !important;
+}
