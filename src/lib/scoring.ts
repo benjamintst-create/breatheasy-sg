@@ -124,8 +124,9 @@ function trafficModifier(lat: number, lng: number, speedBands: TrafficSpeedBand[
   if (!speedBands || speedBands.length === 0) return 0;
   const cosLat = Math.cos((lat * Math.PI) / 180);
 
-  // Accumulate exhaust from ALL nearby roads (not just closest)
-  let totalExhaust = 0;
+  // Find the WORST nearby road (highest exhaust), not accumulate
+  // Group by road identity (same frc + same congestion = same road)
+  let worstExhaust = 0;
 
   for (const band of speedBands) {
     if (!band.startLat || !band.startLng) continue;
@@ -143,7 +144,6 @@ function trafficModifier(lat: number, lng: number, speedBands: TrafficSpeedBand[
     if (band.congestionRatio !== undefined) {
       congestion = band.congestionRatio;
     } else {
-      // LTA speedBand is absolute speed, not relative
       if (frc <= 1) {
         congestion = Math.min(1, band.speedBand / 8);
       } else {
@@ -153,11 +153,13 @@ function trafficModifier(lat: number, lng: number, speedBands: TrafficSpeedBand[
 
     const volume = roadVolumeBaseline(frc);
     const emission = congestionEmissionMultiplier(congestion);
-    totalExhaust += volume * emission * distanceFactor;
+    const exhaust = volume * emission * distanceFactor;
+    if (exhaust > worstExhaust) worstExhaust = exhaust;
   }
 
-  // Scale: max ~4.5 points penalty
-  const penalty = Math.min(4.5, totalExhaust * 1.5);
+  // Scale: worstExhaust of 1.0 = expressway at point blank free flow
+  // Max penalty ~4.0 for jammed expressway right next to you
+  const penalty = Math.min(4.0, worstExhaust * 3.5);
   return Math.round(penalty * 10) / 10;
 }
 
@@ -258,7 +260,7 @@ export function rateRoute(
   const avgTrafficMod = trafficMods.reduce((a, b) => a + b, 0) / trafficMods.length;
   const maxTrafficMod = Math.max(...trafficMods);
   const trafficPct = Math.round(Math.max(0, Math.min(100,
-    100 - (avgTrafficMod * 0.6 + maxTrafficMod * 0.4) * 22
+    100 - (avgTrafficMod * 0.6 + maxTrafficMod * 0.4) * 25
   )));
 
   // Air Quality (30%)
