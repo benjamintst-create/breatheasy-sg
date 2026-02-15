@@ -74,6 +74,7 @@ export interface ScoredPoint {
   color: string;
   band: ScoreBand;
   trafficMod?: number;  // raw traffic penalty for this point
+  industrialZone?: boolean;  // point is in/near an industrial zone
 }
 
 export interface RouteRating {

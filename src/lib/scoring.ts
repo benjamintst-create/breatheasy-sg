@@ -163,6 +163,60 @@ function trafficModifier(lat: number, lng: number, speedBands: TrafficSpeedBand[
   return Math.round(penalty * 10) / 10;
 }
 
+// ── Industrial Zone Model ──
+// Industrial estates have heavy vehicles (trucks/lorries), diesel fumes,
+// and factory emissions beyond what road class alone captures.
+
+const INDUSTRIAL_ZONES: { name: string; ring: [number, number][] }[] = [
+  { name: "Jurong Industrial Estate", ring: [[103.690,1.310],[103.720,1.308],[103.725,1.320],[103.720,1.335],[103.705,1.338],[103.690,1.330]] },
+  { name: "Tuas Industrial", ring: [[103.620,1.310],[103.650,1.308],[103.655,1.320],[103.650,1.335],[103.630,1.338],[103.618,1.325]] },
+  { name: "Woodlands Industrial", ring: [[103.770,1.432],[103.785,1.430],[103.790,1.438],[103.785,1.445],[103.772,1.442]] },
+  { name: "Changi Business Park", ring: [[103.960,1.330],[103.975,1.328],[103.980,1.338],[103.972,1.342],[103.960,1.340]] },
+  { name: "Paya Lebar Industrial", ring: [[103.885,1.340],[103.895,1.338],[103.900,1.345],[103.895,1.350],[103.885,1.348]] },
+  { name: "Kallang/Kolam Ayer Industrial", ring: [[103.868,1.318],[103.878,1.316],[103.882,1.324],[103.876,1.328],[103.868,1.326]] },
+  { name: "Senoko Industrial", ring: [[103.795,1.445],[103.810,1.443],[103.815,1.450],[103.808,1.455],[103.795,1.452]] },
+  { name: "Tanjong Kling Industrial", ring: [[103.728,1.278],[103.740,1.276],[103.745,1.282],[103.738,1.286],[103.728,1.284]] },
+];
+
+const INDUSTRIAL_BUFFER_M = 300; // fumes drift beyond estate boundaries
+
+function pointInPolygon(lat: number, lng: number, ring: [number, number][]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1];
+    const xj = ring[j][0], yj = ring[j][1];
+    if ((yi > lat) !== (yj > lat) && lng < (xj - xi) * (lat - yi) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function distToPolygonEdge(lat: number, lng: number, ring: [number, number][], cosLat: number): number {
+  let minDist = Infinity;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const d = pointToSegmentDist(lat, lng, ring[i][1], ring[i][0], ring[j][1], ring[j][0], cosLat);
+    if (d < minDist) minDist = d;
+  }
+  return minDist;
+}
+
+/** Returns industrial modifier: penalty addition + traffic multiplier */
+function industrialModifier(lat: number, lng: number, cosLat: number): { addition: number; multiplier: number } {
+  for (const zone of INDUSTRIAL_ZONES) {
+    if (pointInPolygon(lat, lng, zone.ring)) {
+      // Inside industrial zone: baseline pollution + amplify any traffic penalty
+      return { addition: 1.2, multiplier: 1.8 };
+    }
+    const dist = distToPolygonEdge(lat, lng, zone.ring, cosLat);
+    if (dist < INDUSTRIAL_BUFFER_M) {
+      const factor = 1 - dist / INDUSTRIAL_BUFFER_M;
+      return { addition: 0.8 * factor, multiplier: 1 + 0.6 * factor };
+    }
+  }
+  return { addition: 0, multiplier: 1 };
+}
+
 // ── Grid lookup ──
 
 export function findNearestCell(lat: number, lng: number, grid: StaticGrid): GridCell | null {
@@ -197,7 +251,12 @@ export function computeScore(
   const windMod = conditions ? windModifier(conditions.wind.speed) : 0;
   const timeMod = timeModifier(currentHour);
   const rainMod = conditions ? rainModifier(conditions.rainfall.isRaining, conditions.rainfall.intensity) : 0;
-  const trafficMod = speedBands ? trafficModifier(lat, lng, speedBands) : 0;
+  const baseTrafMod = speedBands ? trafficModifier(lat, lng, speedBands) : 0;
+
+  // Industrial zones: add baseline industrial pollution + amplify traffic penalty
+  const cosLat = Math.cos((lat * Math.PI) / 180);
+  const indust = industrialModifier(lat, lng, cosLat);
+  const trafficMod = Math.min(4.5, baseTrafMod * indust.multiplier + indust.addition);
 
   const raw = staticBase + pm25Mod + windMod + timeMod + rainMod + trafficMod;
   const score = Math.max(1, Math.min(10, Math.round(raw * 10) / 10));
@@ -206,6 +265,7 @@ export function computeScore(
   return {
     score, band: band.band, label: band.label, color: band.color,
     trafficMod: Math.round(trafficMod * 10) / 10,
+    isIndustrial: indust.addition > 0,
     breakdown: {
       staticBase: Math.round(staticBase * 10) / 10,
       pm25Modifier: Math.round(pm25Mod * 10) / 10,
@@ -232,6 +292,7 @@ export function scoreRoutePoints(
       lat: p.lat, lng: p.lng, distanceM: p.distanceM,
       score: r.score, color: r.color, band: r.band,
       trafficMod: r.trafficMod,
+      industrialZone: r.isIndustrial,
     };
   });
 }
@@ -279,11 +340,18 @@ export function rateRoute(
   const stdDev = Math.sqrt(variance);
   const consistencyPct = Math.round(Math.max(0, Math.min(100, (1 - stdDev / 3) * 100)));
 
+  // Industrial zone exposure
+  const industrialCount = scoredPoints.filter(p => p.industrialZone).length;
+  const industrialPct = Math.round((industrialCount / scoredPoints.length) * 100);
+
   const overall = Math.round(trafficPct * 0.4 + airPct * 0.3 + greenPct * 0.2 + consistencyPct * 0.1);
+
+  const trafficDetail = trafficPct >= 80 ? "Minimal road exhaust exposure" : trafficPct >= 60 ? "Some road-adjacent stretches" : trafficPct >= 40 ? "Significant traffic exposure" : "Heavy traffic along much of the route";
+  const industrialNote = industrialPct > 0 ? ` (${industrialPct}% near industrial zones)` : "";
 
   const factors: RouteRating["factors"] = [
     { label: "Traffic Exposure", pct: trafficPct,
-      detail: trafficPct >= 80 ? "Minimal road exhaust exposure" : trafficPct >= 60 ? "Some road-adjacent stretches" : trafficPct >= 40 ? "Significant traffic exposure" : "Heavy traffic along much of the route" },
+      detail: trafficDetail + industrialNote },
     { label: "Air Quality", pct: airPct,
       detail: airPct >= 80 ? "Clean air throughout" : airPct >= 60 ? "Generally good air" : airPct >= 40 ? "Moderate pollution levels" : "Poor air quality conditions" },
     { label: "Green Corridor", pct: greenPct,
