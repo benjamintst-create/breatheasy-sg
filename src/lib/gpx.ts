@@ -22,7 +22,7 @@ export function parseGPX(xmlString: string): ParsedGPX {
   const parseError = doc.querySelector("parsererror");
   if (parseError) throw new Error("Invalid GPX file: could not parse XML");
 
-  const nameEl = doc.querySelector("trk > name") ?? doc.querySelector("rte > name") ?? doc.querySelector("metadata > name");
+  const nameEl = doc.querySelector("trk > name") ?? doc.querySelector("trk > n") ?? doc.querySelector("rte > name") ?? doc.querySelector("metadata > name") ?? doc.querySelector("metadata > n");
   const name = nameEl?.textContent?.trim() ?? "Uploaded Route";
 
   let points = doc.querySelectorAll("trkpt");

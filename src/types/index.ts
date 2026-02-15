@@ -42,6 +42,8 @@ export interface TrafficSpeedBand {
   startLng: number;
   endLat: number;
   endLng: number;
+  frc?: number;              // TomTom FRC: 0=motorway, 1=first class... 7=local
+  congestionRatio?: number;  // currentSpeed/freeFlowSpeed: 1.0=free, 0=stopped
 }
 
 // ── Scoring ──

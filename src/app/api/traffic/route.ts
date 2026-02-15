@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 
 // ── TomTom Flow Segment Data for a single point ──
 interface TomTomSegment {
+  frc: string;  // "FRC0" to "FRC7"
   currentSpeed: number;
   freeFlowSpeed: number;
   confidence: number;
@@ -28,21 +29,29 @@ async function fetchTomTomSegment(lat: number, lng: number, apiKey: string): Pro
 function tomtomToSpeedBands(seg: TomTomSegment): {
   startLat: number; startLng: number; endLat: number; endLng: number;
   speedBand: number; roadName: string;
+  frc?: number; congestionRatio?: number;
 }[] {
   const coords = seg.coordinates?.coordinate;
   if (!coords || coords.length < 2) return [];
 
-  // Convert currentSpeed/freeFlowSpeed ratio to 1-8 speed band
-  const ratio = seg.freeFlowSpeed > 0 ? seg.currentSpeed / seg.freeFlowSpeed : 1;
+  // Parse FRC: "FRC0" -> 0, "FRC3" -> 3, etc.
+  const frc = seg.frc ? parseInt(seg.frc.replace("FRC", ""), 10) : undefined;
+
+  // Congestion ratio: 1.0 = free flow, 0.0 = standstill
+  const congestionRatio = seg.freeFlowSpeed > 0
+    ? Math.min(1, seg.currentSpeed / seg.freeFlowSpeed)
+    : 1;
+
+  // Convert to 1-8 speed band for backward compat with map display
   let speedBand: number;
   if (seg.roadClosure) speedBand = 1;
-  else if (ratio < 0.25) speedBand = 1;
-  else if (ratio < 0.4) speedBand = 2;
-  else if (ratio < 0.55) speedBand = 3;
-  else if (ratio < 0.7) speedBand = 4;
-  else if (ratio < 0.8) speedBand = 5;
-  else if (ratio < 0.9) speedBand = 6;
-  else if (ratio < 0.95) speedBand = 7;
+  else if (congestionRatio < 0.25) speedBand = 1;
+  else if (congestionRatio < 0.4) speedBand = 2;
+  else if (congestionRatio < 0.55) speedBand = 3;
+  else if (congestionRatio < 0.7) speedBand = 4;
+  else if (congestionRatio < 0.8) speedBand = 5;
+  else if (congestionRatio < 0.9) speedBand = 6;
+  else if (congestionRatio < 0.95) speedBand = 7;
   else speedBand = 8;
 
   const roadName = `${seg.currentSpeed} km/h (free: ${seg.freeFlowSpeed})`;
@@ -55,6 +64,8 @@ function tomtomToSpeedBands(seg: TomTomSegment): {
       endLng: coords[i + 1].longitude,
       speedBand,
       roadName,
+      frc,
+      congestionRatio: Math.round(congestionRatio * 100) / 100,
     });
   }
   return bands;

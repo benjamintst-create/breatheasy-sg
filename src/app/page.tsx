@@ -25,6 +25,10 @@ const Map = dynamic(() => import("@/components/Map"), {
 const STORAGE_KEY = "breatheasy-routes-v2";
 const MAX_SAVED = 30;
 
+const SAMPLE_ROUTES = [
+  { name: "Marina Bay 21K", file: "/samples/marina-bay-21k.gpx" },
+];
+
 function loadSavedRoutes(): SavedRoute[] {
   if (typeof window === "undefined") return [];
   try {
@@ -202,6 +206,17 @@ export default function Home() {
     }
   }, [fetchData]);
 
+  const loadSampleRoute = useCallback(async (url: string, routeName: string) => {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const file = new File([blob], routeName + ".gpx", { type: "application/gpx+xml" });
+      analyzeGPX(file);
+    } catch (err) {
+      console.error("Failed to load sample:", err);
+    }
+  }, [analyzeGPX]);
+
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) analyzeGPX(file);
@@ -278,6 +293,20 @@ export default function Home() {
                 Upload GPX File
               </button>
               <p className="text-xs text-[#5a7090] mt-3">Export from Strava, Garmin, Nike Run Club, etc.</p>
+              <div className="mt-5 pt-4 border-t border-[#1e3050]">
+                <p className="text-xs text-[#5a7090] mb-2">Or try a sample route:</p>
+                <div className="flex flex-wrap gap-2 justify-center">
+                  {SAMPLE_ROUTES.map(s => (
+                    <button
+                      key={s.file}
+                      onClick={() => loadSampleRoute(s.file, s.name)}
+                      className="px-3 py-1.5 rounded-lg bg-[#1e3050] text-[#4ecdc4] text-xs font-medium hover:bg-[#2a4060] transition-colors"
+                    >
+                      {s.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         )}
