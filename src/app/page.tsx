@@ -29,7 +29,7 @@ const SAMPLE_ROUTES = [
   { name: "Marina Bay 21K", file: "/samples/marina-bay-21k.gpx" },
   { name: "Pandan 6K", file: "/samples/pandan-6k.gpx" },
   { name: "Jurong West 6K", file: "/samples/jurong-west-6k.gpx" },
-  { name: "Jurong West 15K", file: "/samples/jurong-west-15k.gpx" },
+  { name: "East Coast 15K", file: "/samples/east-coast-15k.gpx" },
 ];
 
 function loadSavedRoutes(): SavedRoute[] {
@@ -296,20 +296,7 @@ export default function Home() {
                 Upload GPX File
               </button>
               <p className="text-xs text-[#5a7090] mt-3">Export from Strava, Garmin, Nike Run Club, etc.</p>
-              <div className="mt-5 pt-4 border-t border-[#1e3050]">
-                <p className="text-xs text-[#5a7090] mb-2">Or try a sample route:</p>
-                <div className="flex flex-wrap gap-2 justify-center">
-                  {SAMPLE_ROUTES.map(s => (
-                    <button
-                      key={s.file}
-                      onClick={() => loadSampleRoute(s.file, s.name)}
-                      className="px-3 py-1.5 rounded-lg bg-[#1e3050] text-[#4ecdc4] text-xs font-medium hover:bg-[#2a4060] transition-colors"
-                    >
-                      {s.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <p className="text-xs text-[#5a7090] mt-2">Or try a sample route from the sidebar →</p>
             </div>
           </div>
         )}
@@ -465,13 +452,36 @@ export default function Home() {
           </div>
         )}
 
-        {/* History */}
+        {/* Route lists */}
         <div className="px-5 py-4 flex-1">
+          {/* Sample Routes */}
+          <h3 className="text-[11px] uppercase tracking-[1.5px] text-[#5a7090] mb-3">Sample Routes</h3>
+          <div className="space-y-1.5 mb-6">
+            {SAMPLE_ROUTES.map((s) => (
+              <button
+                key={s.file}
+                onClick={() => loadSampleRoute(s.file, s.name)}
+                className="w-full flex items-center gap-3 rounded-xl p-3 border border-[#1e3050] bg-[#162340] hover:border-[#4ecdc4] hover:bg-[#1a2a48] transition-all text-left"
+              >
+                <div className="w-8 h-8 shrink-0 rounded-lg bg-[#1e3050] flex items-center justify-center">
+                  <svg className="w-4 h-4 text-[#4ecdc4]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l5.447 2.724A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+                  </svg>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h4 className="text-[13px] font-semibold text-[#d0dce8] truncate">{s.name}</h4>
+                  <p className="text-[11px] text-[#5a7090]">Tap to analyze</p>
+                </div>
+              </button>
+            ))}
+          </div>
+
+          {/* User Routes */}
           <h3 className="text-[11px] uppercase tracking-[1.5px] text-[#5a7090] mb-3">
-            Recent Routes {savedRoutes.length > 0 && `(${savedRoutes.length})`}
+            Your Routes {savedRoutes.length > 0 && `(${savedRoutes.length})`}
           </h3>
-          {savedRoutes.length === 0 && !activeRoute && (
-            <p className="text-xs text-[#3a5070] text-center py-6">Upload a GPX file to get started</p>
+          {savedRoutes.length === 0 && (
+            <p className="text-xs text-[#3a5070] text-center py-4">Upload a GPX file to see your routes here</p>
           )}
           <div className="space-y-1.5">
             {savedRoutes.map((route) => {
