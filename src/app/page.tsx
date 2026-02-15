@@ -321,7 +321,11 @@ export default function Home() {
             <h1 className="text-lg font-bold text-[#4ecdc4] tracking-tight">
               BreathEasy <span className="text-[#7b8fa8] font-normal text-sm ml-1.5">SG</span>
             </h1>
-            <p className="text-[11px] text-[#5a7090] mt-0.5">Air quality scoring for your running route</p>
+            <p className="text-[11px] text-[#5a7090] mt-0.5">
+              Air quality scoring for your running route
+              <span className="mx-1.5">·</span>
+              <a href="/faq" className="text-[#4ecdc4] hover:underline">FAQ</a>
+            </p>
           </div>
           <input ref={fileInputRef} type="file" accept=".gpx" className="hidden" onChange={handleFileChange} />
           <button
