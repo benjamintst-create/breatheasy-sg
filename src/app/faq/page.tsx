@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 interface FAQItem {
   q: string;
@@ -33,10 +33,6 @@ function Accordion({ item }: { item: FAQItem }) {
   );
 }
 
-function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <h2 className="text-lg font-bold text-[#4ecdc4] mt-10 mb-4">{children}</h2>;
-}
-
 function Table({ headers, rows }: { headers: string[]; rows: string[][] }) {
   return (
     <div className="overflow-x-auto">
@@ -66,7 +62,21 @@ function Table({ headers, rows }: { headers: string[]; rows: string[][] }) {
   );
 }
 
+const SECTIONS = [
+  { id: "general", label: "General" },
+  { id: "methodology", label: "Methodology" },
+  { id: "data", label: "Data & Accuracy" },
+];
+
 export default function FAQPage() {
+  const [showTop, setShowTop] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setShowTop(window.scrollY > 400);
+    window.addEventListener("scroll", onScroll);
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
   const generalFAQ: FAQItem[] = [
     {
       q: "What is BreathEasy SG?",
@@ -79,7 +89,8 @@ export default function FAQPage() {
           </p>
           <p>
             The goal is to help runners make informed decisions about <strong>when</strong> and <strong>where</strong> to
-            run for the cleanest air possible.
+            run for the cleanest air possible — especially in Singapore where running routes often pass near expressways,
+            arterial roads, and industrial estates with heavy vehicle traffic and factory emissions.
           </p>
         </>
       ),
@@ -92,7 +103,7 @@ export default function FAQPage() {
             BreathEasy SG was <strong>vibe coded with Claude Opus 4.6</strong> (Anthropic&apos;s most advanced AI model) in
             a series of iterative sessions — from initial concept and technical specification through to production
             deployment. The entire codebase, scoring model, data pipeline, and UI were developed collaboratively
-            between a human (a corporate real estate lawyer and avid runner based in Jurong West) and Claude.
+            between a human (a busy professional and occasional runner based in the far west of Singapore) and Claude.
           </p>
           <p>
             The tech stack is Next.js deployed on Vercel, with Leaflet for maps and Tailwind CSS for styling. All data
@@ -171,7 +182,6 @@ export default function FAQPage() {
           <p className="font-semibold text-[#d0dce8] mt-3">Step 1: Traffic Volume (Road Class)</p>
           <p>
             We use TomTom&apos;s Functional Road Classification (FRC) as a proxy for how many vehicles use each road.
-            An expressway always has hundreds of cars; a residential lane has very few.
           </p>
           <Table
             headers={["Road Class", "FRC", "Volume Baseline"]}
@@ -187,9 +197,7 @@ export default function FAQPage() {
 
           <p className="font-semibold text-[#d0dce8] mt-3">Step 2: Congestion Emission Multiplier</p>
           <p>
-            Stop-start traffic produces significantly more emissions per vehicle than free-flowing traffic — idling
-            engines are inefficient. We calculate a congestion ratio (currentSpeed ÷ freeFlowSpeed) and apply a
-            multiplier:
+            Stop-start traffic produces significantly more emissions per vehicle than free-flowing traffic.
           </p>
           <Table
             headers={["Congestion Ratio", "Traffic State", "Emission Multiplier"]}
@@ -205,18 +213,16 @@ export default function FAQPage() {
 
           <p className="font-semibold text-[#d0dce8] mt-3">Step 3: Distance Decay</p>
           <p>
-            Exhaust concentrations drop with distance from the road. We use a linear decay within a 400m radius:
+            Linear decay within 400m. At 0m, full penalty. At 400m, zero. Beyond 400m, no effect.
           </p>
           <p className="bg-[#1e3050] px-3 py-2 rounded-lg font-mono text-xs text-[#4ecdc4]">
             distanceFactor = 1 − (distance_metres / 400)
           </p>
-          <p>At 0m (roadside), full penalty. At 400m, zero penalty. Beyond 400m, that road has no effect.</p>
 
           <p className="font-semibold text-[#d0dce8] mt-3">Step 4: Worst Road Wins</p>
           <p>
-            For each point along your route, we find the single worst nearby road (highest exhaust score) within 400m.
-            We deliberately chose a &ldquo;worst road&rdquo; model over accumulation — because TomTom breaks roads into many
-            sub-segments, and summing them would double-count the same road multiple times.
+            For each point, we take the single worst nearby road within 400m (not accumulated), to avoid double-counting
+            road sub-segments.
           </p>
           <p className="bg-[#1e3050] px-3 py-2 rounded-lg font-mono text-xs text-[#4ecdc4]">
             exhaust = roadVolume(frc) × emissionMultiplier(congestion) × distanceFactor<br />
@@ -230,11 +236,9 @@ export default function FAQPage() {
       a: (
         <>
           <p>
-            Singapore has significant industrial estates where air quality is measurably worse — heavy vehicles
-            (trucks, lorries), diesel fumes, and factory emissions go beyond what road classification alone captures. A
-            collector road inside Tuas Industrial is substantially worse than the same road class in Bishan.
+            Industrial estates have heavy vehicles, diesel fumes, and factory emissions beyond what road classification
+            alone captures. We model 21 industrial zones across Singapore:
           </p>
-          <p>We model 21 industrial zones across Singapore, including:</p>
           <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs mt-1">
             {[
               "Jurong Industrial Estate", "Tuas Industrial", "Tuas South", "Pioneer / Gul",
@@ -246,23 +250,16 @@ export default function FAQPage() {
               "Tanjong Kling Industrial", "Keppel / Tanjong Pagar Terminal",
             ].map(z => <span key={z} className="text-[#8aa0b8]">• {z}</span>)}
           </div>
-          <p className="mt-2">Each zone applies two effects:</p>
           <Table
             headers={["Location", "Baseline Addition", "Traffic Multiplier"]}
             rows={[
               ["Inside industrial zone", "+1.2 points", "1.8× traffic penalty"],
-              ["Within 300m of boundary", "+0.8 × proximity factor", "Up to 1.6× traffic penalty"],
+              ["Within 300m of boundary", "+0.8 × proximity", "Up to 1.6×"],
               ["Beyond 300m", "No effect", "No effect"],
             ]}
           />
           <p>
-            The <strong>baseline addition</strong> represents factory and industrial emissions that exist regardless of
-            road traffic. The <strong>multiplier</strong> reflects that vehicles in industrial areas are
-            disproportionately trucks and diesel, so the same road class carries worse exhaust.
-          </p>
-          <p>
-            If your route passes through or near industrial zones, this is surfaced transparently in the Traffic
-            Exposure factor detail, e.g. &ldquo;Significant traffic exposure (42% near industrial zones)&rdquo;.
+            Surfaced transparently in Traffic Exposure detail, e.g. &ldquo;Significant traffic exposure (42% near industrial zones)&rdquo;.
           </p>
         </>
       ),
@@ -271,55 +268,42 @@ export default function FAQPage() {
       q: "How does Air Quality scoring work?",
       a: (
         <>
-          <p>Air Quality combines a static baseline (from the pre-computed grid) with real-time modifiers:</p>
-
-          <p className="font-semibold text-[#d0dce8] mt-2">Static Grid (33,938 cells at 100m resolution)</p>
+          <p>Combines a static baseline grid with real-time modifiers:</p>
+          <p className="font-semibold text-[#d0dce8] mt-2">Static Grid — 33,938 cells at 100m resolution</p>
           <p>
-            A pre-computed grid covering all of Singapore, built from OpenStreetMap data. Each cell has a baseline AQI
-            score factoring in proximity to expressways, arterial roads, junctions, industrial zones, parks, water
-            bodies, and building density (street canyon effect). Cells deep inside parks score ~1.0 (excellent); cells
-            adjacent to expressways score ~6.0+ (poor).
+            Each cell&apos;s baseline factors in proximity to expressways, arterials, junctions, industrial zones, parks,
+            water bodies, and building density.
           </p>
-
           <p className="font-semibold text-[#d0dce8] mt-2">Real-Time Modifiers</p>
           <Table
             headers={["Factor", "Range", "How it works"]}
             rows={[
-              ["PM2.5", "0 to +4.0", "NEA real-time readings. ≤12 µg/m³ = no penalty; 55+ µg/m³ = +3.0; 75+ = +4.0"],
-              ["Wind", "−1.0 to 0", "Wind disperses pollutants. ≥20 km/h = −1.0 (significant benefit)"],
-              ["Time of Day", "−0.5 to +1.0", "Rush hours (7–10am, 4–8pm) add penalty; late night (12–5am) gets bonus"],
-              ["Rainfall", "−2.0 to 0", "Rain scrubs particulates from air. Heavy rain = −2.0 (major benefit)"],
+              ["PM2.5", "0 to +4.0", "NEA readings. ≤12 µg/m³ = 0; 55+ = +3.0; 75+ = +4.0"],
+              ["Wind", "−1.0 to 0", "≥20 km/h = −1.0 (disperses pollutants)"],
+              ["Time of Day", "−0.5 to +1.0", "Rush hours add penalty; late night gets bonus"],
+              ["Rainfall", "−2.0 to 0", "Heavy rain = −2.0 (scrubs particulates)"],
             ]}
           />
-
           <p className="mt-2 bg-[#1e3050] px-3 py-2 rounded-lg font-mono text-xs text-[#4ecdc4]">
-            pointScore = staticBase + pm25Mod + windMod + timeMod + rainMod + trafficMod<br />
-            clamped to range [1, 10]
+            pointScore = staticBase + pm25Mod + windMod + timeMod + rainMod + trafficMod &nbsp;[clamped 1–10]
           </p>
         </>
       ),
     },
     {
-      q: "How does Green Corridor scoring work?",
+      q: "How do Green Corridor and Consistency work?",
       a: (
-        <p>
-          Green Corridor measures what proportion of your route passes through parks and green space. Points are
-          classified using the static grid: cells with a baseline score ≤1.5 are considered &ldquo;deep green&rdquo; (inside
-          parks/reserves), and cells ≤2.5 are considered &ldquo;park-adjacent&rdquo;. The green percentage is calculated as a
-          weighted blend: 70% weight on deep green points + 30% weight on park-adjacent points. A route entirely
-          through East Coast Park would score ~100%; a route entirely through the CBD would score near 0%.
-        </p>
-      ),
-    },
-    {
-      q: "How does Consistency scoring work?",
-      a: (
-        <p>
-          Consistency measures how uniform conditions are along your route, using the standard deviation of point
-          scores. A route that&apos;s consistently &ldquo;good&rdquo; (e.g., all points scoring 3–4) rates higher than one that
-          alternates between &ldquo;excellent&rdquo; and &ldquo;poor&rdquo; — because those poor stretches still expose you to bad air,
-          regardless of the great sections. Formula: <code className="text-[#4ecdc4] text-xs bg-[#1e3050] px-1 rounded">consistency = (1 − stdDev/3) × 100%</code>.
-        </p>
+        <>
+          <p>
+            <strong>Green Corridor (20%)</strong> — Proportion of route through green space. Grid cells ≤1.5 = &ldquo;deep green&rdquo;
+            (parks/reserves), ≤2.5 = &ldquo;park-adjacent&rdquo;. Weighted blend: 70% deep green + 30% park-adjacent.
+          </p>
+          <p>
+            <strong>Consistency (10%)</strong> — Standard deviation of point scores. A consistently &ldquo;good&rdquo; route
+            rates higher than one that swings between excellent and poor.
+            Formula: <code className="text-[#4ecdc4] text-xs bg-[#1e3050] px-1 rounded">(1 − stdDev/3) × 100%</code>.
+          </p>
+        </>
       ),
     },
   ];
@@ -328,39 +312,26 @@ export default function FAQPage() {
     {
       q: "What data sources does BreathEasy use?",
       a: (
-        <>
-          <Table
-            headers={["Source", "Data", "Update Frequency", "Cost"]}
-            rows={[
-              ["NEA (data.gov.sg)", "PM2.5, wind speed/direction, temperature, rainfall", "Every 5–60 minutes", "Free"],
-              ["LTA DataMall", "Island-wide traffic speed bands (expressways + arterials)", "Every 5 minutes", "Free"],
-              ["TomTom Flow Segment Data", "Per-road speed, congestion ratio, road class (FRC), road geometry", "Real-time", "Free tier (~2,500 req/day)"],
-              ["OpenStreetMap", "Expressways, arterials, parks, industrial zones, buildings, cycleways", "Static (pre-computed)", "Free"],
-            ]}
-          />
-          <p className="mt-2">
-            All data sources are free-tier or open data. No paid API subscriptions are required to run this app.
-          </p>
-        </>
+        <Table
+          headers={["Source", "Data", "Frequency", "Cost"]}
+          rows={[
+            ["NEA (data.gov.sg)", "PM2.5, wind, temp, rainfall", "5–60 min", "Free"],
+            ["LTA DataMall", "Island-wide traffic speed bands", "5 min", "Free"],
+            ["TomTom Flow", "Per-road speed, FRC, congestion ratio, geometry", "Real-time", "Free (~2,500 req/day)"],
+            ["OpenStreetMap", "Roads, parks, industrial zones, buildings, cycleways", "Static", "Free"],
+          ]}
+        />
       ),
     },
     {
       q: "How does the TomTom + LTA hybrid work?",
       a: (
-        <>
-          <p>We use both traffic data providers for complementary coverage:</p>
-          <p>
-            <strong>LTA DataMall</strong> provides island-wide speed bands for major roads — great for knowing overall
-            traffic conditions but sparse in residential areas. <strong>TomTom Flow Segment Data</strong> provides
-            per-road lookups with road class (FRC) and congestion ratios — covering every road in Singapore including
-            minor residential streets.
-          </p>
-          <p>
-            When you upload a route, we sample up to 25 points along it and query TomTom for road-level data at each
-            point. LTA data supplements this with broader context. Each road segment carries its FRC
-            classification and real-time congestion ratio, which feed directly into the exhaust volume model.
-          </p>
-        </>
+        <p>
+          <strong>LTA</strong> provides island-wide speed bands for major roads — good for overall conditions but sparse
+          in residential areas. <strong>TomTom</strong> provides per-road lookups with FRC and congestion ratios — covering
+          every road including minor streets. We sample up to 25 points along your route and query TomTom for each.
+          LTA supplements with broader context.
+        </p>
       ),
     },
     {
@@ -368,21 +339,17 @@ export default function FAQPage() {
       a: (
         <>
           <p>
-            BreathEasy is a <strong>best-effort model</strong>, not a scientific instrument. The scoring is based on
-            well-established principles (exhaust dispersion with distance, congestion increasing per-vehicle emissions,
-            road classification as a proxy for traffic volume) but uses several simplifications:
+            BreathEasy is a <strong>best-effort model</strong>, not a scientific instrument. Key simplifications:
           </p>
           <ul className="list-disc list-inside space-y-1 text-xs">
-            <li>Road class is a proxy for traffic volume — actual vehicle counts are not freely available in real-time</li>
-            <li>Industrial zone boundaries are approximate polygons, not exact URA zoning boundaries</li>
-            <li>Wind direction is not factored into dispersion (only wind speed)</li>
-            <li>Elevation and street canyon effects are modelled coarsely via building density</li>
-            <li>TomTom samples are limited to ~25 points per route to stay within free-tier API limits</li>
+            <li>Road class is a proxy for traffic volume — actual vehicle counts aren&apos;t freely available in real-time</li>
+            <li>Industrial zone boundaries are approximate polygons, not exact URA zoning</li>
+            <li>Wind direction is not factored into dispersion (only speed)</li>
+            <li>TomTom samples limited to ~25 points per route (free-tier API limits)</li>
           </ul>
           <p>
-            That said, the relative rankings are meaningful — a route through East Coast Park will reliably score
-            better than one along Pandan Loop during rush hour. Use the scores for comparative decisions, not absolute
-            health claims.
+            The relative rankings are meaningful — a park route will reliably score better than one along an industrial
+            road during rush hour. Use scores for comparative decisions, not absolute health claims.
           </p>
         </>
       ),
@@ -391,53 +358,71 @@ export default function FAQPage() {
 
   return (
     <main className="min-h-screen bg-[#0a1628] text-[#e0e8f0]">
-      <div className="max-w-3xl mx-auto px-5 py-8">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <Link href="/" className="text-[#4ecdc4] text-sm hover:underline mb-2 inline-block">← Back to app</Link>
-            <h1 className="text-2xl font-bold text-[#4ecdc4]">
-              FAQ & Methodology
-            </h1>
-            <p className="text-sm text-[#5a7090] mt-1">How BreathEasy SG works under the hood</p>
+      {/* Sticky nav */}
+      <div className="sticky top-0 z-50 bg-[#0a1628]/95 backdrop-blur-sm border-b border-[#1e3050]">
+        <div className="max-w-3xl mx-auto px-5 py-3 flex items-center justify-between">
+          <Link href="/" className="text-[#4ecdc4] text-sm font-semibold hover:underline">← BreathEasy SG</Link>
+          <div className="flex gap-4">
+            {SECTIONS.map(s => (
+              <a key={s.id} href={`#${s.id}`} className="text-xs text-[#5a7090] hover:text-[#4ecdc4] transition-colors">
+                {s.label}
+              </a>
+            ))}
           </div>
         </div>
+      </div>
+
+      <div className="max-w-3xl mx-auto px-5 py-8">
+        {/* Header */}
+        <h1 className="text-2xl font-bold text-[#4ecdc4] mb-1">FAQ & Methodology</h1>
+        <p className="text-sm text-[#5a7090] mb-6">How BreathEasy SG works under the hood</p>
 
         {/* Vibe coded badge */}
         <div className="bg-[#0f1d32] border border-[#1e3050] rounded-xl px-5 py-4 mb-8">
           <p className="text-sm text-[#8aa0b8] leading-relaxed">
             🫁 BreathEasy SG was <strong className="text-[#4ecdc4]">vibe coded with Claude Opus 4.6</strong> — Anthropic&apos;s
-            most advanced AI model. From concept to production, the entire app (scoring engine, data pipeline, UI, and
-            this FAQ) was developed through collaborative human–AI sessions. The source code is open
+            most advanced AI model. The entire app was developed through collaborative human–AI sessions. Source
             on <a href="https://github.com/benjamintst-create/breatheasy-sg" target="_blank" rel="noopener noreferrer" className="text-[#4ecdc4] hover:underline">GitHub</a>.
           </p>
         </div>
 
         {/* General */}
-        <SectionTitle>General</SectionTitle>
-        <div className="space-y-2">
+        <h2 id="general" className="text-lg font-bold text-[#4ecdc4] mb-4 scroll-mt-16">General</h2>
+        <div className="space-y-2 mb-10">
           {generalFAQ.map((item, i) => <Accordion key={i} item={item} />)}
         </div>
 
-        {/* Scoring Methodology */}
-        <SectionTitle>Scoring Methodology</SectionTitle>
-        <div className="space-y-2">
+        {/* Methodology */}
+        <h2 id="methodology" className="text-lg font-bold text-[#4ecdc4] mb-4 scroll-mt-16">Scoring Methodology</h2>
+        <div className="space-y-2 mb-10">
           {methodologyFAQ.map((item, i) => <Accordion key={i} item={item} />)}
         </div>
 
-        {/* Data Sources */}
-        <SectionTitle>Data Sources & Accuracy</SectionTitle>
-        <div className="space-y-2">
+        {/* Data */}
+        <h2 id="data" className="text-lg font-bold text-[#4ecdc4] mb-4 scroll-mt-16">Data Sources & Accuracy</h2>
+        <div className="space-y-2 mb-10">
           {dataFAQ.map((item, i) => <Accordion key={i} item={item} />)}
         </div>
 
         {/* Footer */}
-        <div className="mt-12 pt-6 border-t border-[#1e3050] text-center">
+        <div className="pt-6 border-t border-[#1e3050] text-center">
           <p className="text-xs text-[#3a5070]">
             BreathEasy SG · Built with Claude Opus 4.6 · Data from NEA, LTA, TomTom, OpenStreetMap
           </p>
         </div>
       </div>
+
+      {/* Back to top */}
+      {showTop && (
+        <button
+          onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+          className="fixed bottom-6 right-6 z-50 w-10 h-10 rounded-full bg-[#4ecdc4] text-[#0a1628] flex items-center justify-center shadow-lg hover:bg-[#3dbdb5] transition-colors"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+          </svg>
+        </button>
+      )}
     </main>
   );
 }
