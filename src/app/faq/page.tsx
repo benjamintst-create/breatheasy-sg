@@ -295,8 +295,29 @@ export default function FAQPage() {
       a: (
         <>
           <p>
-            <strong>Green Corridor (20%)</strong> — Proportion of route through green space. Grid cells ≤1.5 = &ldquo;deep green&rdquo;
-            (parks/reserves), ≤2.5 = &ldquo;park-adjacent&rdquo;. Weighted blend: 70% deep green + 30% park-adjacent.
+            <strong>Green Corridor (20%)</strong> — Measures how much of your route passes through green space. We use
+            two complementary methods:
+          </p>
+          <p>
+            <strong>1. Static grid:</strong> Grid cells ≤1.5 = &ldquo;deep green&rdquo; (parks/reserves), ≤2.5 = &ldquo;park-adjacent&rdquo;.
+          </p>
+          <p>
+            <strong>2. Known park polygons:</strong> 20 major parks and green corridors are defined as explicit zones,
+            ensuring they&apos;re always recognised regardless of grid resolution:
+          </p>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs mt-1">
+            {[
+              "East Coast Park", "Gardens by the Bay", "Marina Bay Promenade", "Botanic Gardens",
+              "MacRitchie Reservoir", "Bedok Reservoir Park", "Pandan Reservoir Park", "Jurong Lake Gardens",
+              "West Coast Park", "Pasir Ris Park", "Bishan-AMK Park", "Fort Canning Park",
+              "Labrador Nature Reserve", "Kent Ridge Park", "Seletar Reservoir", "Punggol Waterway Park",
+              "Coney Island", "Tampines Eco Green", "Southern Ridges", "Bukit Timah Nature Reserve",
+            ].map(z => <span key={z} className="text-[#8aa0b8]">• {z}</span>)}
+          </div>
+          <p className="mt-2">
+            Points inside a park get a low base score (1.2); points within 150m get park-adjacent treatment (2.0).
+            The better of grid-based or polygon-based recognition is used, so parks are never missed.
+            Weighted blend: 70% deep green + 30% park-adjacent.
           </p>
           <p>
             <strong>Consistency (10%)</strong> — Standard deviation of point scores. A consistently &ldquo;good&rdquo; route

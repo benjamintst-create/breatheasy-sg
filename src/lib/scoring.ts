@@ -167,6 +167,116 @@ function trafficModifier(lat: number, lng: number, speedBands: TrafficSpeedBand[
 // Industrial estates have heavy vehicles (trucks/lorries), diesel fumes,
 // and factory emissions beyond what road class alone captures.
 
+// ── Green Zones ──
+// Major parks and green corridors. Points inside get a low staticBase (deep green),
+// points within 150m buffer get park-adjacent treatment.
+const GREEN_BUFFER_M = 150;
+
+const GREEN_ZONES: { name: string; ring: [number, number][] }[] = [
+  // East Coast Park — long coastal strip from Marina East to Bedok
+  { name: "East Coast Park", ring: [
+    [1.296, 103.868], [1.293, 103.880], [1.293, 103.900], [1.295, 103.920],
+    [1.297, 103.940], [1.299, 103.950], [1.302, 103.955], [1.305, 103.950],
+    [1.304, 103.940], [1.303, 103.920], [1.301, 103.900], [1.300, 103.880],
+    [1.300, 103.868],
+  ]},
+  // Gardens by the Bay
+  { name: "Gardens by the Bay", ring: [
+    [1.278, 103.861], [1.278, 103.870], [1.284, 103.870], [1.284, 103.861],
+  ]},
+  // Marina Bay / Bayfront promenade
+  { name: "Marina Bay Promenade", ring: [
+    [1.284, 103.852], [1.284, 103.861], [1.290, 103.861], [1.290, 103.852],
+  ]},
+  // Singapore Botanic Gardens
+  { name: "Botanic Gardens", ring: [
+    [1.310, 103.813], [1.310, 103.820], [1.322, 103.820], [1.322, 103.813],
+  ]},
+  // MacRitchie Reservoir Park
+  { name: "MacRitchie Reservoir", ring: [
+    [1.335, 103.820], [1.335, 103.840], [1.348, 103.840], [1.355, 103.835],
+    [1.355, 103.825], [1.348, 103.820],
+  ]},
+  // Bedok Reservoir Park
+  { name: "Bedok Reservoir Park", ring: [
+    [1.336, 103.930], [1.336, 103.940], [1.342, 103.940], [1.342, 103.930],
+  ]},
+  // Pandan Reservoir Park
+  { name: "Pandan Reservoir Park", ring: [
+    [1.305, 103.735], [1.305, 103.748], [1.315, 103.748], [1.315, 103.735],
+  ]},
+  // Jurong Lake Gardens (Chinese/Japanese Gardens + Lakeside)
+  { name: "Jurong Lake Gardens", ring: [
+    [1.330, 103.720], [1.330, 103.740], [1.340, 103.740], [1.345, 103.735],
+    [1.345, 103.725], [1.340, 103.720],
+  ]},
+  // West Coast Park
+  { name: "West Coast Park", ring: [
+    [1.280, 103.758], [1.280, 103.770], [1.287, 103.770], [1.287, 103.758],
+  ]},
+  // Pasir Ris Park
+  { name: "Pasir Ris Park", ring: [
+    [1.373, 103.942], [1.373, 103.960], [1.382, 103.960], [1.382, 103.942],
+  ]},
+  // Bishan-Ang Mo Kio Park
+  { name: "Bishan-AMK Park", ring: [
+    [1.356, 103.843], [1.356, 103.852], [1.365, 103.852], [1.365, 103.843],
+  ]},
+  // Fort Canning Park
+  { name: "Fort Canning Park", ring: [
+    [1.293, 103.843], [1.293, 103.849], [1.298, 103.849], [1.298, 103.843],
+  ]},
+  // Labrador Nature Reserve
+  { name: "Labrador Nature Reserve", ring: [
+    [1.264, 103.800], [1.264, 103.808], [1.270, 103.808], [1.270, 103.800],
+  ]},
+  // Kent Ridge Park
+  { name: "Kent Ridge Park", ring: [
+    [1.282, 103.787], [1.282, 103.796], [1.290, 103.796], [1.290, 103.787],
+  ]},
+  // Lower + Upper Seletar Reservoir
+  { name: "Seletar Reservoir", ring: [
+    [1.393, 103.815], [1.393, 103.830], [1.402, 103.830], [1.402, 103.815],
+  ]},
+  // Punggol Waterway Park
+  { name: "Punggol Waterway Park", ring: [
+    [1.404, 103.898], [1.404, 103.914], [1.412, 103.914], [1.412, 103.898],
+  ]},
+  // Coney Island / Punggol Point
+  { name: "Coney Island", ring: [
+    [1.411, 103.915], [1.411, 103.930], [1.418, 103.930], [1.418, 103.915],
+  ]},
+  // Tampines Eco Green
+  { name: "Tampines Eco Green", ring: [
+    [1.355, 103.952], [1.355, 103.960], [1.362, 103.960], [1.362, 103.952],
+  ]},
+  // Southern Ridges (from Kent Ridge to Mount Faber)
+  { name: "Southern Ridges", ring: [
+    [1.270, 103.800], [1.275, 103.818], [1.280, 103.818], [1.275, 103.800],
+  ]},
+  // Bukit Timah Nature Reserve
+  { name: "Bukit Timah Nature Reserve", ring: [
+    [1.348, 103.772], [1.348, 103.782], [1.358, 103.782], [1.358, 103.772],
+  ]},
+];
+
+/** Returns whether a point is inside a known green zone, or within buffer */
+function greenZoneCheck(lat: number, lng: number, cosLat: number): { inPark: boolean; nearPark: boolean } {
+  for (const zone of GREEN_ZONES) {
+    if (pointInPolygon(lat, lng, zone.ring)) {
+      return { inPark: true, nearPark: true };
+    }
+    const dist = distToPolygonEdge(lat, lng, zone.ring, cosLat);
+    if (dist < GREEN_BUFFER_M) {
+      return { inPark: false, nearPark: true };
+    }
+  }
+  return { inPark: false, nearPark: false };
+}
+
+// ── Industrial Zones ──
+// Industrial estates produce ambient pollution from heavy vehicle traffic
+
 const INDUSTRIAL_ZONES: { name: string; ring: [number, number][] }[] = [
   // ── West / Jurong ──
   { name: "Jurong Industrial Estate", ring: [[103.690,1.308],[103.720,1.306],[103.730,1.312],[103.730,1.335],[103.720,1.340],[103.705,1.342],[103.690,1.335]] },
@@ -275,6 +385,11 @@ export function computeScore(
   const indust = industrialModifier(lat, lng, cosLat);
   const trafficMod = Math.min(4.5, baseTrafMod * indust.multiplier + indust.addition);
 
+  // Green zones: override staticBase when inside a known park
+  const green = greenZoneCheck(lat, lng, cosLat);
+  if (green.inPark) staticBase = Math.min(staticBase, 1.2);
+  else if (green.nearPark) staticBase = Math.min(staticBase, 2.0);
+
   const raw = staticBase + pm25Mod + windMod + timeMod + rainMod + trafficMod;
   const score = Math.max(1, Math.min(10, Math.round(raw * 10) / 10));
   const band = getBand(score);
@@ -283,6 +398,8 @@ export function computeScore(
     score, band: band.band, label: band.label, color: band.color,
     trafficMod: Math.round(trafficMod * 10) / 10,
     isIndustrial: indust.addition > 0,
+    isGreenZone: green.inPark,
+    isNearGreenZone: green.nearPark,
     breakdown: {
       staticBase: Math.round(staticBase * 10) / 10,
       pm25Modifier: Math.round(pm25Mod * 10) / 10,
@@ -310,6 +427,8 @@ export function scoreRoutePoints(
       score: r.score, color: r.color, band: r.band,
       trafficMod: r.trafficMod,
       industrialZone: r.isIndustrial,
+      greenZone: r.isGreenZone,
+      nearGreenZone: r.isNearGreenZone,
     };
   });
 }
@@ -344,9 +463,14 @@ export function rateRoute(
   // Air Quality (30%)
   const airPct = Math.round(Math.max(0, Math.min(100, ((10 - avgScore) / 9) * 100)));
 
-  // Green Corridor (20%)
-  const greenCount = basescores.filter(b => b <= 1.5).length;
-  const parkCount = basescores.filter(b => b <= 2.5).length;
+  // Green Corridor (20%) — combine static grid basescores with known green zone polygons
+  const greenFromGrid = basescores.filter(b => b <= 1.5).length;
+  const parkFromGrid = basescores.filter(b => b <= 2.5).length;
+  const greenFromZones = scoredPoints.filter(p => p.greenZone).length;
+  const nearGreenFromZones = scoredPoints.filter(p => p.nearGreenZone).length;
+  // Take the better of grid-based or zone-based counts
+  const greenCount = Math.max(greenFromGrid, greenFromZones);
+  const parkCount = Math.max(parkFromGrid, nearGreenFromZones);
   const greenPct = Math.round(Math.min(100,
     (greenCount / basescores.length) * 100 * 0.7 +
     (parkCount / basescores.length) * 100 * 0.3
@@ -372,7 +496,11 @@ export function rateRoute(
     { label: "Air Quality", pct: airPct,
       detail: airPct >= 80 ? "Clean air throughout" : airPct >= 60 ? "Generally good air" : airPct >= 40 ? "Moderate pollution levels" : "Poor air quality conditions" },
     { label: "Green Corridor", pct: greenPct,
-      detail: greenPct >= 80 ? "Mostly through parks and green space" : greenPct >= 60 ? "Good mix of greenery" : greenPct >= 40 ? "Some green sections" : "Mostly urban, limited greenery" },
+      detail: (() => {
+        const zonePct = Math.round((greenFromZones / scoredPoints.length) * 100);
+        const base = greenPct >= 80 ? "Mostly through parks and green space" : greenPct >= 60 ? "Good mix of greenery" : greenPct >= 40 ? "Some green sections" : "Mostly urban, limited greenery";
+        return zonePct > 0 ? `${base} (${zonePct}% in known parks)` : base;
+      })() },
     { label: "Consistency", pct: consistencyPct,
       detail: consistencyPct >= 80 ? "Even conditions throughout" : consistencyPct >= 60 ? "Mostly consistent" : consistencyPct >= 40 ? "Some bad patches along the way" : "Quality varies a lot — expect bad stretches" },
   ];
