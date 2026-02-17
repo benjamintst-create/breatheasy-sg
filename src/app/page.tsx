@@ -27,9 +27,9 @@ const MAX_SAVED = 30;
 
 const SAMPLE_ROUTES = [
   { name: "Marina Bay 21K", file: "/samples/marina-bay-21k.gpx" },
+  { name: "East Coast 16K", file: "/samples/east-coast-16k.gpx" },
   { name: "Pandan 6K", file: "/samples/pandan-6k.gpx" },
   { name: "Jurong West 6K", file: "/samples/jurong-west-6k.gpx" },
-  { name: "East Coast 15K", file: "/samples/east-coast-15k.gpx" },
 ];
 
 function loadSavedRoutes(): SavedRoute[] {
