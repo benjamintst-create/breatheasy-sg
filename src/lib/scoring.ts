@@ -173,12 +173,13 @@ function trafficModifier(lat: number, lng: number, speedBands: TrafficSpeedBand[
 const GREEN_BUFFER_M = 150;
 
 const GREEN_ZONES: { name: string; ring: [number, number][] }[] = [
-  // East Coast Park — long coastal strip from Marina East to Bedok
+  // East Coast Park — full coastal strip from Marina East to Bedok Jetty
   { name: "East Coast Park", ring: [
-    [103.868, 1.296], [103.880, 1.293], [103.900, 1.293], [103.920, 1.295],
-    [103.940, 1.297], [103.950, 1.299], [103.955, 1.302], [103.950, 1.305],
-    [103.940, 1.304], [103.920, 1.303], [103.900, 1.301], [103.880, 1.300],
-    [103.868, 1.300],
+    [103.868, 1.293], [103.880, 1.291], [103.900, 1.292], [103.920, 1.296],
+    [103.935, 1.300], [103.945, 1.305], [103.955, 1.310], [103.965, 1.314],
+    [103.975, 1.318], [103.975, 1.322], [103.965, 1.320], [103.955, 1.316],
+    [103.945, 1.312], [103.935, 1.308], [103.920, 1.305], [103.900, 1.302],
+    [103.880, 1.300], [103.868, 1.300],
   ]},
   // Gardens by the Bay
   { name: "Gardens by the Bay", ring: [
