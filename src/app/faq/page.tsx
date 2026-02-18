@@ -279,8 +279,8 @@ export default function FAQPage() {
             headers={["Factor", "Range", "How it works"]}
             rows={[
               ["PM2.5", "0 to +4.0", "NEA readings. ≤12 µg/m³ = 0; 55+ = +3.0; 75+ = +4.0"],
-              ["Wind", "−1.0 to 0", "≥20 km/h = −1.0 (disperses pollutants)"],
-              ["Time of Day", "−0.5 to +1.0", "Rush hours add penalty; late night gets bonus"],
+              ["Wind", "−1.0 to 0", "≥20 km/h = −1.0; ≥12 = −0.5; ≥6 = −0.2; calm = neutral"],
+              ["Time of Day", "−0.5 to +1.0", "Rush hours (7–9am, 5–7pm) +1.0; shoulders +0.5; pre-dawn bonus −0.5"],
               ["Rainfall", "−2.0 to 0", "Heavy rain = −2.0 (scrubs particulates)"],
             ]}
           />
@@ -314,8 +314,21 @@ export default function FAQPage() {
               "Coney Island", "Tampines Eco Green", "Southern Ridges", "Bukit Timah Nature Reserve",
             ].map(z => <span key={z} className="text-[#8aa0b8]">• {z}</span>)}
           </div>
+          <p>
+            <strong>3. Park Connectors (PCN):</strong> 12 major park connector routes are defined as polylines.
+            Points within 50m get a discounted green score (base 2.5 vs 1.2 for parks), contributing at 0.15 weight
+            to the Green Corridor score (vs 0.7 for parks). Connectors include:
+          </p>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs mt-1">
+            {[
+              "Eastern Coastal PCN", "Ulu Pandan PCN", "Jurong PCN", "Kallang PCN",
+              "Punggol PCN", "NE Riverine Loop", "Alexandra Canal PCN", "Tampines PCN",
+              "Sungei Serangoon PCN", "Central Catchment PCN", "Clementi PCN", "Yishun PCN",
+            ].map(z => <span key={z} className="text-[#8aa0b8]">• {z}</span>)}
+          </div>
           <p className="mt-2">
-            Points inside a park get a low base score (1.2); points within 150m get park-adjacent treatment (2.0).
+            Points inside a park get a low base score (1.2); points within 150m get park-adjacent treatment (2.0);
+            points on park connectors get 2.5.
             The better of grid-based or polygon-based recognition is used, so parks are never missed.
             Weighted blend: 70% deep green + 30% park-adjacent.
           </p>

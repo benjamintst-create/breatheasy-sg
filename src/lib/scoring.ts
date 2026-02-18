@@ -46,20 +46,19 @@ function pm25Modifier(pm25: number): number {
 }
 
 function windModifier(speedKmh: number): number {
-  if (speedKmh >= 20) return -1.0;
+  if (speedKmh >= 20) return -1.0;  // strong wind disperses well
   if (speedKmh >= 12) return -0.5;
-  if (speedKmh >= 6) return 0;
-  if (speedKmh >= 2) return 0.3;
-  return 0.5;
+  if (speedKmh >= 6) return -0.2;
+  return 0;                          // calm = neutral, not a penalty
 }
 
 function timeModifier(hour: number): number {
-  if (hour >= 7 && hour <= 9) return 1.5;
-  if (hour >= 17 && hour <= 19) return 1.5;
-  if (hour >= 6 && hour <= 10) return 0.8;
-  if (hour >= 16 && hour <= 20) return 0.8;
-  if (hour >= 0 && hour <= 5) return -0.5;
-  return 0.3;
+  if (hour >= 7 && hour <= 9) return 1.0;   // morning rush
+  if (hour >= 17 && hour <= 19) return 1.0;  // evening rush
+  if (hour >= 6 && hour <= 10) return 0.5;   // shoulder hours
+  if (hour >= 16 && hour <= 20) return 0.5;  // shoulder hours
+  if (hour >= 0 && hour <= 5) return -0.5;   // late night / pre-dawn bonus
+  return 0.2;                                 // midday
 }
 
 function rainModifier(isRaining: boolean, intensity: string): number {
@@ -261,18 +260,104 @@ const GREEN_ZONES: { name: string; ring: [number, number][] }[] = [
   ]},
 ];
 
-/** Returns whether a point is inside a known green zone, or within buffer */
-function greenZoneCheck(lat: number, lng: number, cosLat: number): { inPark: boolean; nearPark: boolean } {
+// ── Park Connectors ──
+// Narrow tree-lined paths connecting parks. Not as green as full parks —
+// staticBase capped at 2.5 (vs 1.2 for parks). Check within 50m of line.
+const PCN_BUFFER_M = 15;
+const PCN_BASE = 2.5;
+
+const PARK_CONNECTORS: { name: string; path: [number, number][] }[] = [
+  // Eastern Coastal PCN — East Coast to Changi Beach
+  { name: "Eastern Coastal PCN", path: [
+    [103.955, 1.310], [103.965, 1.315], [103.975, 1.320], [103.985, 1.330],
+    [103.995, 1.340], [104.005, 1.350], [104.015, 1.365], [104.025, 1.375],
+    [104.035, 1.382], [104.045, 1.385],
+  ]},
+  // Ulu Pandan PCN — along Ulu Pandan canal
+  { name: "Ulu Pandan PCN", path: [
+    [103.748, 1.315], [103.755, 1.318], [103.765, 1.320], [103.775, 1.318],
+    [103.785, 1.315], [103.795, 1.312], [103.805, 1.310],
+  ]},
+  // Jurong Lake PCN — loop around Jurong Lake linking to Pandan
+  { name: "Jurong PCN", path: [
+    [103.720, 1.330], [103.725, 1.325], [103.730, 1.318], [103.735, 1.315],
+    [103.740, 1.318], [103.745, 1.325], [103.745, 1.335],
+  ]},
+  // Kallang PCN — along Kallang River from Bishan to Marina
+  { name: "Kallang PCN", path: [
+    [103.848, 1.360], [103.852, 1.350], [103.855, 1.340], [103.860, 1.330],
+    [103.862, 1.320], [103.863, 1.310], [103.862, 1.300], [103.860, 1.290],
+  ]},
+  // Punggol Waterway PCN
+  { name: "Punggol PCN", path: [
+    [103.898, 1.404], [103.905, 1.400], [103.910, 1.395], [103.915, 1.400],
+    [103.920, 1.405], [103.925, 1.410],
+  ]},
+  // Northeast Riverine Loop — Punggol to Sengkang
+  { name: "NE Riverine Loop", path: [
+    [103.890, 1.390], [103.895, 1.395], [103.900, 1.400], [103.905, 1.405],
+    [103.910, 1.400], [103.915, 1.395], [103.910, 1.390],
+  ]},
+  // Alexandra Canal Linear Park
+  { name: "Alexandra Canal PCN", path: [
+    [103.805, 1.290], [103.810, 1.285], [103.815, 1.282], [103.820, 1.280],
+    [103.825, 1.278], [103.830, 1.278],
+  ]},
+  // Tampines PCN — linking Bedok Reservoir to Pasir Ris
+  { name: "Tampines PCN", path: [
+    [103.940, 1.342], [103.945, 1.348], [103.950, 1.355], [103.952, 1.362],
+    [103.950, 1.370], [103.948, 1.378],
+  ]},
+  // Sungei Serangoon PCN
+  { name: "Sungei Serangoon PCN", path: [
+    [103.870, 1.368], [103.878, 1.375], [103.885, 1.380], [103.890, 1.385],
+    [103.893, 1.390],
+  ]},
+  // Central Catchment PCN — MacRitchie area connectors
+  { name: "Central Catchment PCN", path: [
+    [103.815, 1.355], [103.820, 1.360], [103.825, 1.368], [103.830, 1.375],
+    [103.835, 1.380], [103.840, 1.388],
+  ]},
+  // Sungei Ulu Pandan to Clementi
+  { name: "Clementi PCN", path: [
+    [103.760, 1.320], [103.768, 1.325], [103.775, 1.328], [103.780, 1.330],
+  ]},
+  // Yishun PCN — around Lower Seletar
+  { name: "Yishun PCN", path: [
+    [103.830, 1.402], [103.835, 1.408], [103.840, 1.412], [103.845, 1.418],
+    [103.840, 1.422], [103.835, 1.418],
+  ]},
+];
+
+/** Distance from point to nearest segment of a polyline, in metres */
+function distToPolyline(lat: number, lng: number, path: [number, number][], cosLat: number): number {
+  let minDist = Infinity;
+  for (let i = 0; i < path.length - 1; i++) {
+    const d = pointToSegmentDist(lat, lng, path[i][1], path[i][0], path[i + 1][1], path[i + 1][0], cosLat);
+    if (d < minDist) minDist = d;
+  }
+  return minDist;
+}
+
+/** Returns whether a point is inside a known green zone, near one, or near a park connector */
+function greenZoneCheck(lat: number, lng: number, cosLat: number): { inPark: boolean; nearPark: boolean; nearConnector: boolean } {
   for (const zone of GREEN_ZONES) {
     if (pointInPolygon(lat, lng, zone.ring)) {
-      return { inPark: true, nearPark: true };
+      return { inPark: true, nearPark: true, nearConnector: false };
     }
     const dist = distToPolygonEdge(lat, lng, zone.ring, cosLat);
     if (dist < GREEN_BUFFER_M) {
-      return { inPark: false, nearPark: true };
+      return { inPark: false, nearPark: true, nearConnector: false };
     }
   }
-  return { inPark: false, nearPark: false };
+  // Check park connectors
+  for (const pcn of PARK_CONNECTORS) {
+    const dist = distToPolyline(lat, lng, pcn.path, cosLat);
+    if (dist < PCN_BUFFER_M) {
+      return { inPark: false, nearPark: false, nearConnector: true };
+    }
+  }
+  return { inPark: false, nearPark: false, nearConnector: false };
 }
 
 // ── Industrial Zones ──
@@ -386,10 +471,11 @@ export function computeScore(
   const indust = industrialModifier(lat, lng, cosLat);
   const trafficMod = Math.min(4.5, baseTrafMod * indust.multiplier + indust.addition);
 
-  // Green zones: override staticBase when inside a known park
+  // Green zones: override staticBase when inside a known park or near a connector
   const green = greenZoneCheck(lat, lng, cosLat);
   if (green.inPark) staticBase = Math.min(staticBase, 1.2);
   else if (green.nearPark) staticBase = Math.min(staticBase, 2.0);
+  else if (green.nearConnector) staticBase = Math.min(staticBase, PCN_BASE);
 
   const raw = staticBase + pm25Mod + windMod + timeMod + rainMod + trafficMod;
   const score = Math.max(1, Math.min(10, Math.round(raw * 10) / 10));
@@ -401,6 +487,7 @@ export function computeScore(
     isIndustrial: indust.addition > 0,
     isGreenZone: green.inPark,
     isNearGreenZone: green.nearPark,
+    isNearConnector: green.nearConnector,
     breakdown: {
       staticBase: Math.round(staticBase * 10) / 10,
       pm25Modifier: Math.round(pm25Mod * 10) / 10,
@@ -430,6 +517,7 @@ export function scoreRoutePoints(
       industrialZone: r.isIndustrial,
       greenZone: r.isGreenZone,
       nearGreenZone: r.isNearGreenZone,
+      nearConnector: r.isNearConnector,
     };
   });
 }
@@ -458,23 +546,34 @@ export function rateRoute(
   const avgTrafficMod = trafficMods.reduce((a, b) => a + b, 0) / trafficMods.length;
   const maxTrafficMod = Math.max(...trafficMods);
   const trafficPct = Math.round(Math.max(0, Math.min(100,
-    100 - (avgTrafficMod * 0.6 + maxTrafficMod * 0.4) * 25
+    100 - (avgTrafficMod * 0.6 + maxTrafficMod * 0.4) * 20
   )));
 
-  // Air Quality (30%)
-  const airPct = Math.round(Math.max(0, Math.min(100, ((10 - avgScore) / 9) * 100)));
+  // Air Quality (30%) — only environmental factors, no traffic double-counting
+  const envScores = scoredPoints.map(p => {
+    if (!grid) return 3;
+    const cell = findNearestCell(p.lat, p.lng, grid);
+    const base = cell ? cell.base : 3;
+    return base; // static grid already captures proximity to pollution sources
+  });
+  const avgEnvScore = envScores.reduce((a, b) => a + b, 0) / envScores.length;
+  const airPct = Math.round(Math.max(0, Math.min(100, ((10 - avgEnvScore) / 9) * 100)));
 
   // Green Corridor (20%) — combine static grid basescores with known green zone polygons
+  // Parks: 0.7 weight (deep green) + 0.3 weight (park-adjacent)
+  // Connectors: 0.15 weight (significantly discounted)
   const greenFromGrid = basescores.filter(b => b <= 1.5).length;
   const parkFromGrid = basescores.filter(b => b <= 2.5).length;
   const greenFromZones = scoredPoints.filter(p => p.greenZone).length;
   const nearGreenFromZones = scoredPoints.filter(p => p.nearGreenZone).length;
+  const connectorCount = scoredPoints.filter(p => p.nearConnector).length;
   // Take the better of grid-based or zone-based counts
   const greenCount = Math.max(greenFromGrid, greenFromZones);
   const parkCount = Math.max(parkFromGrid, nearGreenFromZones);
   const greenPct = Math.round(Math.min(100,
     (greenCount / basescores.length) * 100 * 0.7 +
-    (parkCount / basescores.length) * 100 * 0.3
+    (parkCount / basescores.length) * 100 * 0.3 +
+    (connectorCount / basescores.length) * 100 * 0.25
   ));
 
   // Consistency (10%)
@@ -499,8 +598,12 @@ export function rateRoute(
     { label: "Green Corridor", pct: greenPct,
       detail: (() => {
         const zonePct = Math.round((greenFromZones / scoredPoints.length) * 100);
+        const connPct = Math.round((connectorCount / scoredPoints.length) * 100);
         const base = greenPct >= 80 ? "Mostly through parks and green space" : greenPct >= 60 ? "Good mix of greenery" : greenPct >= 40 ? "Some green sections" : "Mostly urban, limited greenery";
-        return zonePct > 0 ? `${base} (${zonePct}% in known parks)` : base;
+        const parts = [base];
+        if (zonePct > 0) parts.push(`${zonePct}% in parks`);
+        if (connPct > 0) parts.push(`${connPct}% on park connectors`);
+        return parts.length > 1 ? `${parts[0]} (${parts.slice(1).join(", ")})` : parts[0];
       })() },
     { label: "Consistency", pct: consistencyPct,
       detail: consistencyPct >= 80 ? "Even conditions throughout" : consistencyPct >= 60 ? "Mostly consistent" : consistencyPct >= 40 ? "Some bad patches along the way" : "Quality varies a lot — expect bad stretches" },
