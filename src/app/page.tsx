@@ -4,7 +4,7 @@
 // BreathEasy SG — Main Page (v2: upload-first)
 // ============================================================
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import type {
   CurrentConditions, StaticGrid, TrafficSpeedBand,
@@ -12,6 +12,10 @@ import type {
 } from "@/types";
 import { parseGPX, downsample } from "@/lib/gpx";
 import { scoreRoutePoints, rateRoute } from "@/lib/scoring";
+import TimeRecommendation from "@/components/TimeRecommendation";
+import ScoreHistory from "@/components/ScoreHistory";
+import { saveSnapshot, getHistory } from "@/lib/history";
+import { downloadGPX } from "@/lib/gpx-export";
 
 const Map = dynamic(() => import("@/components/Map"), {
   ssr: false,
@@ -66,13 +70,35 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [selectedPoint, setSelectedPoint] = useState<ScoredPoint | null>(null);
   const [trafficBands, setTrafficBands] = useState<TrafficSpeedBand[]>([]);
+  const [warning, setWarning] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [compareRoute, setCompareRoute] = useState<AnalyzedRoute | null>(null);
+  const [showCopied, setShowCopied] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [historySnapshots, setHistorySnapshots] = useState<{ timestamp: string; overall: number }[]>([]);
+  const [isOffline, setIsOffline] = useState(false);
   const [editingName, setEditingName] = useState<string | null>(null); // route id being edited
   const [editValue, setEditValue] = useState("");
 
   const gridRef = useRef<StaticGrid | null>(null);
+  const conditionsRef = useRef<CurrentConditions | null>(null);
+  const trafficRef = useRef<TrafficSpeedBand[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { setSavedRoutes(loadSavedRoutes()); }, []);
+
+  // PWA: register service worker + online/offline detection
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+    const goOffline = () => setIsOffline(true);
+    const goOnline = () => setIsOffline(false);
+    window.addEventListener("offline", goOffline);
+    window.addEventListener("online", goOnline);
+    setIsOffline(!navigator.onLine);
+    return () => { window.removeEventListener("offline", goOffline); window.removeEventListener("online", goOnline); };
+  }, []);
 
   // Always fetch fresh conditions + traffic
   // Pass route points to traffic API for TomTom per-point lookups
@@ -87,19 +113,32 @@ export default function Home() {
     }
 
     const [condRes, trafficRes, gridRes] = await Promise.all([
-      fetch("/api/conditions"),
-      fetch(trafficUrl),
-      gridRef.current ? Promise.resolve(null) : fetch("/data/static_grid.json"),
+      fetch("/api/conditions").catch(() => null),
+      fetch(trafficUrl).catch(() => null),
+      gridRef.current ? Promise.resolve(null) : fetch("/data/static_grid.json").catch(() => null),
     ]);
 
-    const conditions: CurrentConditions = await condRes.json();
-    const trafficData = await trafficRes.json();
-    const traffic: TrafficSpeedBand[] = trafficData.bands ?? [];
+    let conditions: CurrentConditions | null = null;
+    if (condRes && condRes.ok) {
+      try { conditions = await condRes.json(); } catch { /* parse error */ }
+    }
+    if (!conditions) {
+      setWarning("Live conditions unavailable — scoring with defaults");
+    } else {
+      setWarning(null);
+    }
 
-    if (gridRes) {
+    let traffic: TrafficSpeedBand[] = [];
+    if (trafficRes && trafficRes.ok) {
+      try { const td = await trafficRes.json(); traffic = td.bands ?? []; } catch { /* parse error */ }
+    }
+
+    if (gridRes && gridRes.ok) {
       try { gridRef.current = await gridRes.json(); } catch { /* no grid */ }
     }
 
+    conditionsRef.current = conditions;
+    trafficRef.current = traffic;
     setTrafficBands(traffic);
     return { conditions, grid: gridRef.current, traffic };
   }, []);
@@ -126,17 +165,20 @@ export default function Home() {
         pointCount: coordinates.length,
         coordinates,
         scoredPoints,
+        interpolated,
         rating,
         conditions: {
-          pm25: conditions.pm25.value,
-          wind: conditions.wind.speed,
-          temp: conditions.temperature,
-          rain: conditions.rainfall.intensity,
+          pm25: conditions?.pm25?.value ?? 0,
+          wind: conditions?.wind?.speed ?? 0,
+          temp: conditions?.temperature ?? 28,
+          rain: conditions?.rainfall?.intensity ?? "Unknown",
         },
         analyzedAt: new Date().toISOString(),
       };
 
       setActiveRoute(analyzed);
+      saveSnapshot(analyzed.id, analyzed.rating.overall);
+      setHistorySnapshots(getHistory(analyzed.id));
 
       // Update saved route
       const saved: SavedRoute = {
@@ -190,17 +232,20 @@ export default function Home() {
         pointCount: parsed.pointCount,
         coordinates: parsed.coordinates,
         scoredPoints,
+        interpolated: parsed.interpolated,
         rating,
         conditions: {
-          pm25: conditions.pm25.value,
-          wind: conditions.wind.speed,
-          temp: conditions.temperature,
-          rain: conditions.rainfall.intensity,
+          pm25: conditions?.pm25?.value ?? 0,
+          wind: conditions?.wind?.speed ?? 0,
+          temp: conditions?.temperature ?? 28,
+          rain: conditions?.rainfall?.intensity ?? "Unknown",
         },
         analyzedAt: new Date().toISOString(),
       };
 
       setActiveRoute(analyzed);
+      saveSnapshot(analyzed.id, analyzed.rating.overall);
+      setHistorySnapshots(getHistory(analyzed.id));
 
       const saved: SavedRoute = {
         id: analyzed.id, name: analyzed.name,
@@ -294,18 +339,130 @@ export default function Home() {
     setEditingName(null);
   }, [editingName, editValue, activeRoute]);
 
+  // Reverse route
+  const reverseRoute = useCallback(() => {
+    if (!activeRoute) return;
+    const reversed = [...activeRoute.coordinates].reverse();
+    const revId = activeRoute.id.endsWith("-rev") ? activeRoute.id.slice(0, -4) : `${activeRoute.id}-rev`;
+    const revName = activeRoute.name.endsWith(" (reversed)")
+      ? activeRoute.name.slice(0, -11)
+      : `${activeRoute.name} (reversed)`;
+    analyzeCoordinates(revId, revName, reversed, activeRoute.distanceM, activeRoute.distance, activeRoute.elevationGain);
+  }, [activeRoute, analyzeCoordinates]);
+
+  // Share route results
+  const shareRoute = useCallback(async () => {
+    if (!activeRoute) return;
+    const factors = activeRoute.rating.factors.map(f => `  ${f.label}: ${f.pct}%`).join("\n");
+    const text = [
+      `${activeRoute.name} — Score: ${activeRoute.rating.overall}/100`,
+      `Distance: ${activeRoute.distance}`,
+      factors,
+      `PM2.5: ${activeRoute.conditions.pm25} · Wind: ${activeRoute.conditions.wind} km/h · ${activeRoute.conditions.rain}`,
+      `Analyzed: ${new Date(activeRoute.analyzedAt).toLocaleString("en-SG")}`,
+      `\nScored with BreathEasy SG`,
+    ].join("\n");
+
+    if (navigator.share) {
+      try { await navigator.share({ title: "BreathEasy SG", text }); return; } catch { /* cancelled */ }
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setShowCopied(true);
+      setTimeout(() => setShowCopied(false), 2000);
+    } catch { /* clipboard denied */ }
+  }, [activeRoute]);
+
+  // Compare: re-analyze a saved route and set as comparison
+  const startCompare = useCallback(async (saved: SavedRoute) => {
+    try {
+      const { conditions, grid, traffic } = await fetchData(saved.coordinates);
+      const { interpolateFromCoords } = await import("@/lib/gpx");
+      const interpolated = interpolateFromCoords(saved.coordinates, 50);
+      const scoredPoints = scoreRoutePoints(interpolated, conditions, grid, traffic);
+      const rating = rateRoute(scoredPoints, grid);
+      setCompareRoute({
+        id: saved.id, name: saved.name, distance: saved.distance,
+        distanceM: saved.distanceM, elevationGain: saved.elevationGain,
+        pointCount: saved.coordinates.length, coordinates: saved.coordinates,
+        scoredPoints, interpolated, rating,
+        conditions: {
+          pm25: conditions?.pm25?.value ?? 0,
+          wind: conditions?.wind?.speed ?? 0,
+          temp: conditions?.temperature ?? 28,
+          rain: conditions?.rainfall?.intensity ?? "Unknown",
+        },
+        analyzedAt: new Date().toISOString(),
+      });
+    } catch { /* silent */ }
+  }, [fetchData]);
+
+  // Drag-and-drop handlers
+  const dragCounter = useRef(0);
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    dragCounter.current++;
+    if (e.dataTransfer.types.includes("Files")) setIsDragging(true);
+  }, []);
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    dragCounter.current--;
+    if (dragCounter.current === 0) setIsDragging(false);
+  }, []);
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation();
+  }, []);
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    setIsDragging(false);
+    dragCounter.current = 0;
+    const file = e.dataTransfer.files?.[0];
+    if (file && file.name.toLowerCase().endsWith(".gpx")) {
+      analyzeGPX(file);
+    } else if (file) {
+      setError("Please drop a .gpx file");
+    }
+  }, [analyzeGPX]);
+
+  // Auto-refresh every 5 minutes
+  useEffect(() => {
+    if (!autoRefresh || !activeRoute) return;
+    const id = setInterval(() => {
+      if (activeRoute) {
+        analyzeCoordinates(
+          activeRoute.id, activeRoute.name, activeRoute.coordinates,
+          activeRoute.distanceM, activeRoute.distance, activeRoute.elevationGain
+        );
+      }
+    }, 5 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [autoRefresh, activeRoute, analyzeCoordinates]);
+
+  // Clear auto-refresh when route changes
+  useEffect(() => {
+    if (!activeRoute) setAutoRefresh(false);
+  }, [activeRoute?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const pctColor = (pct: number) =>
     pct >= 80 ? "#4ecdc4" : pct >= 65 ? "#a8e6a3" : pct >= 50 ? "#f7d794" : pct >= 35 ? "#f8a978" : "#fc5c65";
 
   return (
     <main className="flex h-screen bg-[#0a1628] text-[#e0e8f0] overflow-hidden md:flex-row flex-col">
       {/* Map */}
-      <div className="flex-1 relative md:order-2 order-1 min-h-[40vh] md:min-h-0">
+      <div
+        className="flex-1 relative md:order-2 order-1 min-h-[40vh] md:min-h-0"
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      >
         <Map
           coordinates={activeRoute?.coordinates ?? []}
           scoredPoints={activeRoute?.scoredPoints ?? []}
           trafficBands={trafficBands}
           onPointClick={setSelectedPoint}
+          compareCoordinates={compareRoute?.coordinates}
+          compareScoredPoints={compareRoute?.scoredPoints}
         />
 
         {/* Upload overlay when no route */}
@@ -336,6 +493,18 @@ export default function Home() {
             </div>
           </div>
         )}
+
+        {isDragging && (
+          <div className="absolute inset-0 z-[600] flex items-center justify-center bg-[#0a1628]/80 backdrop-blur-sm">
+            <div className="border-2 border-dashed border-[#4ecdc4] rounded-2xl p-12 text-center">
+              <svg className="w-12 h-12 text-[#4ecdc4] mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+              </svg>
+              <p className="text-lg font-semibold text-[#4ecdc4]">Drop GPX file here</p>
+              <p className="text-xs text-[#5a7090] mt-1">Release to analyze your route</p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Sidebar */}
@@ -363,6 +532,14 @@ export default function Home() {
 
         {error && (
           <div className="mx-5 mt-3 p-3 rounded-lg bg-[#2a0a0a] border border-[#5c1a1a] text-xs text-[#fc5c65]">{error}</div>
+        )}
+        {isOffline && (
+          <div className="mx-5 mt-3 p-3 rounded-lg bg-[#2a1f0a] border border-[#5c4a1a] text-xs text-[#f7d794]">
+            You&apos;re offline — cached data will be used where available
+          </div>
+        )}
+        {warning && !error && !isOffline && (
+          <div className="mx-5 mt-3 p-3 rounded-lg bg-[#2a1f0a] border border-[#5c4a1a] text-xs text-[#f7d794]">{warning}</div>
         )}
 
         {/* Active route rating */}
@@ -465,6 +642,108 @@ export default function Home() {
                 <span className="text-[9px] text-[#5a7090]">{activeRoute.distance}</span>
               </div>
             </div>
+
+            {activeRoute.interpolated && activeRoute.interpolated.length > 0 && (
+              <TimeRecommendation
+                interpolated={activeRoute.interpolated}
+                conditions={conditionsRef.current}
+                grid={gridRef.current}
+                traffic={trafficRef.current}
+              />
+            )}
+
+            {historySnapshots.length >= 2 && (
+              <ScoreHistory snapshots={historySnapshots} />
+            )}
+
+            {/* Action buttons */}
+            <div className="mt-4 pt-3 border-t border-[#1a2d4a] flex gap-2 flex-wrap">
+              <button
+                onClick={reverseRoute}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#162340] border border-[#1e3050] text-[11px] text-[#8aa0b8] hover:border-[#4ecdc4] hover:text-[#4ecdc4] transition-all"
+                title="Analyze route in reverse direction"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
+                </svg>
+                Reverse
+              </button>
+              <button
+                onClick={shareRoute}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#162340] border border-[#1e3050] text-[11px] text-[#8aa0b8] hover:border-[#4ecdc4] hover:text-[#4ecdc4] transition-all relative"
+                title="Share route results"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                </svg>
+                Share
+                {showCopied && (
+                  <span className="absolute -top-7 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded bg-[#4ecdc4] text-[#0a1628] text-[10px] font-semibold whitespace-nowrap">
+                    Copied!
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => setAutoRefresh(v => !v)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] transition-all ${
+                  autoRefresh
+                    ? "bg-[#0f2a30] border-[#4ecdc4] text-[#4ecdc4]"
+                    : "bg-[#162340] border-[#1e3050] text-[#8aa0b8] hover:border-[#4ecdc4] hover:text-[#4ecdc4]"
+                }`}
+                title={autoRefresh ? "Auto-refresh ON (every 5 min)" : "Enable auto-refresh"}
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                {autoRefresh ? "Auto" : "Auto"}
+              </button>
+              <button
+                onClick={() => activeRoute && downloadGPX(activeRoute)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#162340] border border-[#1e3050] text-[11px] text-[#8aa0b8] hover:border-[#4ecdc4] hover:text-[#4ecdc4] transition-all"
+                title="Export scored route as GPX"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Export
+              </button>
+            </div>
+          </div>
+        )}
+
+        {compareRoute && activeRoute && (
+          <div className="px-5 py-3 border-b border-[#1a2d4a] bg-[#0d1a2e]">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[10px] uppercase tracking-[1.5px] text-[#5a7090]">Comparison</p>
+              <button onClick={() => setCompareRoute(null)} className="text-[10px] text-[#5a7090] hover:text-[#fc5c65]">Clear</button>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center text-[11px]">
+              <div />
+              <div className="text-[#4ecdc4] font-semibold truncate">{activeRoute.name}</div>
+              <div className="text-[#8aa0b8] font-semibold truncate">{compareRoute.name}</div>
+              {[
+                { label: "Overall", a: activeRoute.rating.overall, b: compareRoute.rating.overall },
+                { label: "Traffic", a: activeRoute.rating.trafficExposure, b: compareRoute.rating.trafficExposure },
+                { label: "Air", a: activeRoute.rating.airQuality, b: compareRoute.rating.airQuality },
+                { label: "Green", a: activeRoute.rating.greenCorridor, b: compareRoute.rating.greenCorridor },
+              ].map(row => {
+                const diff = row.a - row.b;
+                return (
+                  <React.Fragment key={row.label}>
+                    <div className="text-[#5a7090] text-left">{row.label}</div>
+                    <div style={{ color: pctColor(row.a) }}>{row.a}%</div>
+                    <div className="flex items-center justify-center gap-1">
+                      <span style={{ color: pctColor(row.b) }}>{row.b}%</span>
+                      {diff !== 0 && (
+                        <span className={`text-[9px] ${diff > 0 ? "text-[#4ecdc4]" : "text-[#fc5c65]"}`}>
+                          {diff > 0 ? `+${diff}` : diff}
+                        </span>
+                      )}
+                    </div>
+                  </React.Fragment>
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -522,7 +801,7 @@ export default function Home() {
                 <div key={route.id} className="relative group">
                   <button
                     onClick={() => refreshRoute(route)}
-                    className={`w-full flex items-center gap-3 rounded-xl p-3 border transition-all text-left pr-9 ${
+                    className={`w-full flex items-center gap-3 rounded-xl p-3 border transition-all text-left pr-16 ${
                       isActive ? "border-[#4ecdc4] bg-[#0f2a30]" : "border-[#1e3050] bg-[#162340] hover:border-[#2a4a6a] hover:bg-[#1a2a48]"
                     }`}
                   >
@@ -565,22 +844,36 @@ export default function Home() {
                       </p>
                     </div>
                   </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); deleteSavedRoute(route.id); }}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded text-[#5a7090] hover:text-[#fc5c65] opacity-0 group-hover:opacity-100 transition-all"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
+                  <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                    {activeRoute && activeRoute.id !== route.id && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); startCompare(route); }}
+                        className="p-1 rounded text-[#5a7090] hover:text-[#4ecdc4]"
+                        title="Compare with active route"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                        </svg>
+                      </button>
+                    )}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); deleteSavedRoute(route.id); }}
+                      className="p-1 rounded text-[#5a7090] hover:text-[#fc5c65]"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               );
             })}
           </div>
         </div>
 
-        <div className="px-5 py-2 border-t border-[#1a2d4a] text-[10px] text-[#3a5070]">
-          Data: data.gov.sg · LTA DataMall · OSM
+        <div className="px-5 py-2 border-t border-[#1a2d4a] text-[10px] text-[#3a5070] flex justify-between">
+          <span>Data: data.gov.sg · LTA DataMall · OSM</span>
+          <span>v1.1.0</span>
         </div>
       </div>
     </main>
