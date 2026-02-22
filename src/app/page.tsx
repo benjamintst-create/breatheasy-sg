@@ -32,10 +32,24 @@ const SAMPLE_ROUTES = [
   { name: "Jurong West 6K", file: "/samples/jurong-west-6k.gpx" },
 ];
 
+function isValidSavedRoute(r: unknown): r is SavedRoute {
+  if (!r || typeof r !== "object") return false;
+  const obj = r as Record<string, unknown>;
+  return typeof obj.id === "string" && obj.id.length <= 200
+    && typeof obj.name === "string" && obj.name.length <= 200
+    && typeof obj.distance === "string"
+    && typeof obj.distanceM === "number" && isFinite(obj.distanceM)
+    && typeof obj.analyzedAt === "string"
+    && Array.isArray(obj.coordinates) && obj.coordinates.length <= 500
+    && obj.rating != null && typeof obj.rating === "object";
+}
+
 function loadSavedRoutes(): SavedRoute[] {
   if (typeof window === "undefined") return [];
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]");
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]");
+    if (!Array.isArray(raw)) return [];
+    return raw.filter(isValidSavedRoute).slice(0, MAX_SAVED);
   } catch { return []; }
 }
 
@@ -152,6 +166,10 @@ export default function Home() {
 
   // Analyze a GPX file
   const analyzeGPX = useCallback(async (file: File) => {
+    if (file.size > 5 * 1024 * 1024) {
+      setError("GPX file too large. Maximum is 5 MB.");
+      return;
+    }
     setError(null);
     setAnalyzing(true);
     setSelectedPoint(null);
@@ -222,7 +240,14 @@ export default function Home() {
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) analyzeGPX(file);
+    if (file) {
+      if (!file.name.toLowerCase().endsWith(".gpx")) {
+        setError("Please upload a .gpx file");
+        e.target.value = "";
+        return;
+      }
+      analyzeGPX(file);
+    }
     e.target.value = "";
   }, [analyzeGPX]);
 
@@ -252,7 +277,7 @@ export default function Home() {
 
   const commitRename = useCallback(() => {
     if (!editingName || !editValue.trim()) { setEditingName(null); return; }
-    const newName = editValue.trim();
+    const newName = editValue.trim().slice(0, 100);
 
     // Update active route if it's the one being renamed
     if (activeRoute?.id === editingName) {
@@ -361,6 +386,7 @@ export default function Home() {
                 {editingName === activeRoute.id ? (
                   <input
                     autoFocus
+                    maxLength={100}
                     value={editValue}
                     onChange={e => setEditValue(e.target.value)}
                     onBlur={commitRename}
@@ -514,6 +540,7 @@ export default function Home() {
                       {isEditing ? (
                         <input
                           autoFocus
+                          maxLength={100}
                           value={editValue}
                           onChange={e => setEditValue(e.target.value)}
                           onBlur={commitRename}
