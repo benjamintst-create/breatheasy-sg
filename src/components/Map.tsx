@@ -46,12 +46,15 @@ interface MapProps {
   scoredPoints: ScoredPoint[];
   trafficBands: TrafficSpeedBand[];
   onPointClick?: (point: ScoredPoint) => void;
+  compareCoordinates?: LatLng[];
+  compareScoredPoints?: ScoredPoint[];
 }
 
-export default function Map({ coordinates, scoredPoints, trafficBands, onPointClick }: MapProps) {
+export default function Map({ coordinates, scoredPoints, trafficBands, onPointClick, compareCoordinates, compareScoredPoints }: MapProps) {
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const routeLayerRef = useRef<L.LayerGroup | null>(null);
+  const compareLayerRef = useRef<L.LayerGroup | null>(null);
   const trafficLayerRef = useRef<L.LayerGroup | null>(null);
   const markerRef = useRef<L.CircleMarker | null>(null);
 
@@ -142,9 +145,30 @@ export default function Map({ coordinates, scoredPoints, trafficBands, onPointCl
     grp.addTo(map);
     routeLayerRef.current = grp;
 
-    const bounds = L.latLngBounds(scoredPoints.map(p => [p.lat, p.lng] as L.LatLngTuple));
+    const allPoints = [...scoredPoints, ...(compareScoredPoints ?? [])];
+    const bounds = L.latLngBounds(allPoints.map(p => [p.lat, p.lng] as L.LatLngTuple));
     map.fitBounds(bounds, { padding: [50, 50] });
-  }, [scoredPoints, onPointClick]);
+  }, [scoredPoints, onPointClick, compareScoredPoints]);
+
+  // ── Draw comparison route (dashed, dimmer) ──
+  useEffect(() => {
+    const map = mapRef.current; if (!map) return;
+    if (compareLayerRef.current) { map.removeLayer(compareLayerRef.current); compareLayerRef.current = null; }
+
+    if (!compareScoredPoints || compareScoredPoints.length < 2) return;
+
+    const grp = L.layerGroup();
+    for (let i = 0; i < compareScoredPoints.length - 1; i++) {
+      const a = compareScoredPoints[i];
+      const b = compareScoredPoints[i + 1];
+      L.polyline(
+        [[a.lat, a.lng], [b.lat, b.lng]],
+        { color: a.color, weight: 4, opacity: 0.5, dashArray: "8 6", lineCap: "round", lineJoin: "round" }
+      ).addTo(grp);
+    }
+    grp.addTo(map);
+    compareLayerRef.current = grp;
+  }, [compareScoredPoints]);
 
   return (
     <div className="relative flex-1 h-full">

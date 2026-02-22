@@ -99,6 +99,7 @@ export interface AnalyzedRoute {
   pointCount: number;
   coordinates: LatLng[];        // full parsed coords (for map display)
   scoredPoints: ScoredPoint[];  // scored at 50m intervals
+  interpolated?: { lat: number; lng: number; distanceM: number }[];
   rating: RouteRating;
   conditions: {
     pm25: number;
