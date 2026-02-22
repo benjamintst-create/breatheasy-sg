@@ -77,6 +77,7 @@ export interface ScoredPoint {
   industrialZone?: boolean;  // point is in/near an industrial zone
   greenZone?: boolean;  // point is inside a known park/green corridor
   nearGreenZone?: boolean;  // point is within 150m of a known park
+  nearConnector?: boolean;  // point is near a park connector (PCN)
 }
 
 export interface RouteRating {
