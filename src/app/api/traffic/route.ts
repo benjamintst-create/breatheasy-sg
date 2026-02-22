@@ -71,6 +71,16 @@ function tomtomToSpeedBands(seg: TomTomSegment): {
   return bands;
 }
 
+// Singapore bounding box (with generous margin)
+const SG_BOUNDS = { minLat: 1.1, maxLat: 1.5, minLng: 103.5, maxLng: 104.1 };
+const MAX_POINTS = 50;
+const COORD_PATTERN = /^-?\d+\.?\d*,-?\d+\.?\d*$/;
+
+function isValidSGCoord(lat: number, lng: number): boolean {
+  return lat >= SG_BOUNDS.minLat && lat <= SG_BOUNDS.maxLat &&
+         lng >= SG_BOUNDS.minLng && lng <= SG_BOUNDS.maxLng;
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const pointsParam = searchParams.get("points"); // lat,lng|lat,lng|...
@@ -83,18 +93,23 @@ export async function GET(request: Request) {
   if (ltaKey) {
     try {
       ltaBands = await fetchTrafficSpeedBands(ltaKey);
-    } catch (e) {
-      console.error("LTA fetch failed:", e);
+    } catch {
+      // LTA fetch failed — continue with TomTom only
     }
   }
 
   // If route points provided + TomTom key, fetch per-point traffic for better coverage
   let tomtomBands: typeof ltaBands = [];
   if (tomtomKey && pointsParam) {
-    const points = pointsParam.split("|").map(p => {
-      const [lat, lng] = p.split(",").map(Number);
-      return { lat, lng };
-    }).filter(p => !isNaN(p.lat) && !isNaN(p.lng));
+    // Validate and parse points parameter
+    const rawParts = pointsParam.split("|").slice(0, MAX_POINTS);
+    const points = rawParts
+      .filter(p => COORD_PATTERN.test(p))
+      .map(p => {
+        const [lat, lng] = p.split(",").map(Number);
+        return { lat, lng };
+      })
+      .filter(p => !isNaN(p.lat) && !isNaN(p.lng) && isValidSGCoord(p.lat, p.lng));
 
     // Sample every ~200m (limit API calls). Max 25 points per request.
     const step = Math.max(1, Math.floor(points.length / 25));

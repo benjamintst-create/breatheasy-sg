@@ -15,7 +15,14 @@ export interface ParsedGPX {
   interpolated: { lat: number; lng: number; distanceM: number }[];
 }
 
+const MAX_GPX_SIZE = 5 * 1024 * 1024; // 5 MB
+const MAX_TRACK_POINTS = 50_000;
+
 export function parseGPX(xmlString: string): ParsedGPX {
+  if (xmlString.length > MAX_GPX_SIZE) {
+    throw new Error(`GPX file too large (${(xmlString.length / 1024 / 1024).toFixed(1)} MB). Maximum is 5 MB.`);
+  }
+
   const parser = new DOMParser();
   const doc = parser.parseFromString(xmlString, "application/xml");
 
@@ -29,17 +36,26 @@ export function parseGPX(xmlString: string): ParsedGPX {
   if (points.length === 0) points = doc.querySelectorAll("rtept");
   if (points.length === 0) points = doc.querySelectorAll("wpt");
   if (points.length === 0) throw new Error("No track points found in GPX file");
+  if (points.length > MAX_TRACK_POINTS) {
+    throw new Error(`GPX file has too many points (${points.length}). Maximum is ${MAX_TRACK_POINTS}.`);
+  }
 
   const coordinates: LatLng[] = [];
   const elevations: number[] = [];
 
   points.forEach((pt) => {
-    const lat = parseFloat(pt.getAttribute("lat") ?? "0");
-    const lng = parseFloat(pt.getAttribute("lon") ?? "0");
-    if (lat !== 0 && lng !== 0) {
-      coordinates.push({ lat, lng });
-      const ele = pt.querySelector("ele");
-      if (ele) elevations.push(parseFloat(ele.textContent ?? "0"));
+    const latAttr = pt.getAttribute("lat");
+    const lonAttr = pt.getAttribute("lon");
+    if (!latAttr || !lonAttr) return;
+    const lat = parseFloat(latAttr);
+    const lng = parseFloat(lonAttr);
+    if (!isFinite(lat) || !isFinite(lng)) return;
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return;
+    coordinates.push({ lat, lng });
+    const ele = pt.querySelector("ele");
+    if (ele?.textContent) {
+      const elev = parseFloat(ele.textContent);
+      if (isFinite(elev)) elevations.push(elev);
     }
   });
 

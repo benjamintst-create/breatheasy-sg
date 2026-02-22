@@ -128,10 +128,8 @@ export async function fetchTrafficSpeedBands(apiKey: string): Promise<TrafficSpe
       skip += 500;
       if (skip >= 10000) break;
     }
-    console.log(`LTA: fetched ${allBands.length} speed bands`);
     return allBands;
-  } catch (err) {
-    console.error("LTA fetch failed:", err);
+  } catch {
     return allBands;
   }
 }
